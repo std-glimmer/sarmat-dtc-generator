@@ -292,8 +292,10 @@ local function generate()
         return
     end
     for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
+    local failed = #errors
 
     local summary = {}
+    local written, seen = {}, {}   -- short aircraft names for the chat, e.g. "AH-64D"
     local function statsText(stats)
         local parts = {}
         for k, v in pairs(stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
@@ -323,14 +325,25 @@ local function generate()
                     end
                 end
                 summary[#summary + 1] = label .. ' ' .. statsText(f.stats)
+                local short = string.match(f.type, '^([^_]+)') or f.type
+                if not seen[short] then
+                    seen[short] = true
+                    written[#written + 1] = short
+                end
             else
                 warn('cannot write ' .. path .. ': ' .. tostring(err))
+                failed = failed + 1
             end
         end
     end
     local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
     info('cartridges written for ' .. state.side .. around .. ': ' .. table.concat(summary, ', '))
-    chat('SarmatDTC: DTC updated for ' .. string.upper(state.side) .. ' - ' .. table.concat(summary, ', '))
+    -- short chat line, details are in dcs.log
+    local where = state.spawn and state.spawn.name and (' (' .. state.spawn.name .. ')') or ''
+    local msg = 'SarmatDTC: ' .. string.upper(state.side) .. ' DTC ready' .. where .. ': '
+        .. (#written > 0 and table.concat(written, ', ') or 'none')
+    if failed > 0 then msg = msg .. ' - ' .. failed .. ' error(s), see dcs.log' end
+    chat(msg)
 end
 
 ------------------------------------------------------------------------------

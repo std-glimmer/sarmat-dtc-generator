@@ -236,7 +236,9 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
 - Лог: `Saved Games\DCS.openbeta\Logs\dcs.log`, искать `SARMAT.DTC`.
 - Кэш: `Scripts\SarmatDTC\cache\` (`done.flag` = `ok`/`fail`). Ручная проверка загрузки:
   `wscript //B //Nologo Scripts\SarmatDTC\fetch.vbs https://baikalprimestudio.com/data/`.
-- После записи в чат приходит локальное сообщение `SarmatDTC: DTC updated ...` (`CONFIG.SHOW_CHAT`).
+- После записи в чат приходит короткое локальное сообщение (`CONFIG.SHOW_CHAT`), например
+  `SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C`: сторона, база спавна, записанные
+  типы (часть до `_`), а при сбоях — `N error(s), see dcs.log`. Подробная статистика есть только в `dcs.log`.
 
 ## Соглашения
 

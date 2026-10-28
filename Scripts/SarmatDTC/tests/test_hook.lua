@@ -192,6 +192,8 @@ for _, t in ipairs(types) do check(exists(dtcDir .. 'SARMAT_' .. t .. '.dtc'), '
 check(not exists(dtcDir .. 'SARMAT_F-14BU.dtc'), 'F-14BU written although commented out in config.lua')
 check(not exists(dtcDir .. 'SARMAT_ZZ_TEST.dtc'), 'native cartridge written for a module without build')
 check(#chats == 1, 'expected one chat message, got ' .. #chats)
+check(chats[1] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ',
+    'chat message: ' .. tostring(chats[1]))
 check(logged('base=Hatay'), 'airfield slot not resolved')
 check(logged('cartridges written for blue around Hatay'), 'spawn base not used for generation')
 local blue = readAH64()
