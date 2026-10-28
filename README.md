@@ -19,7 +19,15 @@
 Скопируйте папку `Scripts` из репозитория в `%USERPROFILE%\Saved Games\DCS.openbeta\`.
 Нужны Windows 10/11: используется встроенный `curl.exe`.
 
-Настройки — блок `CONFIG` в начале `Scripts/SarmatDTC/SarmatDTC.lua`.
+Настройки — блок `CONFIG` в начале `Scripts/SarmatDTC/SarmatDTC.lua`. Параметры отдельных модулей
+задаются в `CONFIG.AIRCRAFT`, например `['AH-64D_BLK_II'] = { CTRLM_FARPS = 15 }` или
+`['F-14BU'] = { enabled = false }`.
+
+## Новые модули
+
+Логика каждого модуля — отдельный файл в `Scripts/SarmatDTC/aircraft/`. Чтобы добавить модуль,
+скопируйте `aircraft/_template.lua` в `aircraft/<тип DTC>.lua` и заполните его: файл подхватится
+автоматически.
 
 ## Тесты
 

@@ -1,26 +1,25 @@
--- SarmatDTC core: builds DTC data tables from SARMAT map data (status.json + units.json).
+-- SarmatDTC core: turns SARMAT map data (status.json + units.json) into an aircraft-neutral
+-- "situation" and runs the aircraft modules (Scripts/SarmatDTC/aircraft/*.lua) over it.
 -- Pure Lua 5.1, no DCS dependencies: terrain access is injected through `env`.
 --
 -- env = {
---     terrain   = "Syria",                       -- DCS terrain id written into the cartridges
---     getHeight = function(x, z) return m end,   -- optional, terrain elevation [m]
---     toLatLon  = function(x, z) return lat, lon end, -- optional, needed by F-14 lines
+--     terrain   = "Syria",                            -- DCS terrain id written into the cartridges
+--     getHeight = function(x, z) return m end,        -- optional, terrain elevation [m]
+--     toLatLon  = function(x, z) return lat, lon end, -- optional
 -- }
 -- Coordinates: SARMAT x/z are DCS map coordinates; DTC files store them as x (north) / y (east).
+--
+-- Aircraft module (aircraft/<type>.lua) returns:
+-- {
+--     type    = "F-16C_50",               -- DTC unit type, also the output file name SARMAT_<type>.dtc
+--     options = { POINTS = 25, ... },     -- defaults, overridable per type from CONFIG.AIRCRAFT
+--     build   = function(situation, lib, options) return data, stats end,
+-- }
+-- `data` is the cartridge "data" table, `stats` a flat {name = number} table for the log.
 
 local M = {}
 
 M.CARTRIDGE_NAME = "SARMAT"
-
-M.LIMITS = {
-    CTRLM      = 49,   -- AH-64D Control Measures (C51..C99)
-    CTRLM_FARPS = nil, -- nil: FARPs compete with units by distance to front; N: reserve up to N slots for FARPs
-    TGT        = 50,   -- AH-64D Targets and Threats (T01..T50)
-    AH64_LINES = 15, AH64_LINE_PTS = 4,
-    F16_PTS    = 25,   -- GEO LINES steerpoints 31..55
-    F18_LINES  = 3,  F18_LINE_PTS  = 7,
-    F14_LINES  = 2,  F14_LINE_PTS  = 9, -- F-14 plan holds max 20 points in total
-}
 
 local FARP_TWIN_M  = 600    -- the map merges FARPs closer than this into one site
 local AD_DEDUP_M   = 2000   -- SAM site from status.json vs. live AD group from units.json
@@ -29,7 +28,7 @@ local AD_DEDUP_M   = 2000   -- SAM site from status.json vs. live AD group from 
 -- geometry
 ------------------------------------------------------------------------------
 
-local function round(v, step)
+function M.round(v, step)
     step = step or 0.1
     return math.floor(v / step + 0.5) * step
 end
@@ -46,7 +45,7 @@ local function distSegment(px, pz, ax, az, bx, bz)
     return math.sqrt((px - cx) ^ 2 + (pz - cz) ^ 2)
 end
 
-local function distToPolyline(x, z, line)
+function M.distToPolyline(x, z, line)
     if #line == 0 then return 0 end
     if #line == 1 then return math.sqrt((x - line[1].x) ^ 2 + (z - line[1].z) ^ 2) end
     local best = math.huge
@@ -108,58 +107,99 @@ function M.chain(line, maxLines, maxPerLine)
     return lines
 end
 
+-- Copy of `list` sorted by distance to the front line, cut to `limit` items.
+function M.byFront(list, front, limit)
+    local sorted = {}
+    for i, p in ipairs(list) do
+        sorted[i] = { d = M.distToPolyline(p.x, p.z, front), p = p }
+    end
+    table.sort(sorted, function(a, b) return a.d < b.d end)
+    local out = {}
+    for i = 1, math.min(limit or #sorted, #sorted) do out[i] = sorted[i].p end
+    return out
+end
+
+------------------------------------------------------------------------------
+-- terrain helpers for modules
+------------------------------------------------------------------------------
+
+function M.elevation(env, x, z)
+    if env.getHeight then
+        local ok, h = pcall(env.getHeight, x, z)
+        if ok and type(h) == "number" then return math.floor(h + 0.5) end
+    end
+    return 0
+end
+
+function M.latLon(env, x, z)
+    if env.toLatLon then
+        local ok, lat, lon = pcall(env.toLatLon, x, z)
+        if ok and lat then return lat, lon end
+    end
+    return 0, 0
+end
+
+-- Common cartridge header: { type, name, terrain }.
+function M.cartridge(unitType, env)
+    return { type = unitType, name = M.CARTRIDGE_NAME, terrain = env.terrain }
+end
+
+function M.asciiUpper(s, maxLen)
+    s = string.upper(string.gsub(tostring(s or ""), "[^%w%s%-%._/()+]", ""))
+    s = string.gsub(s, "%s+", " ")
+    if maxLen and #s > maxLen then s = string.sub(s, 1, maxLen) end
+    return s
+end
+
 ------------------------------------------------------------------------------
 -- unit classification
 ------------------------------------------------------------------------------
 
--- Air defence types, ordered by threat (first match wins for a group).
--- tgt = AH-64D TGT/THRT symbol id (CoreMods/aircraft/AH-64D/DTC/NAV/Points.lua).
-local AD_TYPES = {
-    { tgt = 12, name = "SA-10",    pat = { "s%-300", "5p85", "64h6", "40b6", "54k6", "sa%-10[^%d]" } },
-    { tgt = 13, name = "SA-11",    pat = { "sa%-11[^%d]", "buk", "9a310", "9s18", "9a39" } },
-    { tgt = 43, name = "PATRIOT",  pat = { "patriot" } },
-    { tgt = 7,  name = "SA-5",     pat = { "s%-200", "sa%-5[^%d]" } },
-    { tgt = 4,  name = "SA-2",     pat = { "snr_75", "s_75", "s%-75", "volhov", "sa%-2[^%d]" } },
-    { tgt = 24, name = "HAWK",     pat = { "hawk" } },
-    { tgt = 8,  name = "SA-6",     pat = { "kub", "sa%-6[^%d]" } },
-    { tgt = 5,  name = "SA-3",     pat = { "s%-125", "5p73", "sa%-3[^%d]" } },
-    { tgt = 2,  name = "NASAMS",   pat = { "nasams" } },
-    { tgt = 17, name = "SA-15",    pat = { " tor ", "9a331", "sa%-15[^%d]" } },
-    { tgt = 35, name = "PANTSIR",  pat = { "pantsir", "panzir", "96k6" } },
-    { tgt = 20, name = "SA-19",    pat = { "tunguska", "2s6", "sa%-19[^%d]" } },
-    { tgt = 25, name = "ROLAND",   pat = { "roland" } },
-    { tgt = 10, name = "SA-8",     pat = { "osa ", "9a33 ", "sa%-8[^%d]" } },
-    { tgt = 29, name = "RAPIER",   pat = { "rapier" } },
-    { tgt = 28, name = "HQ-7",     pat = { "hq%-7" } },
-    { tgt = 15, name = "SA-13",    pat = { "strela%-10", "sa%-13[^%d]" } },
-    { tgt = 46, name = "CHAPARRAL",pat = { "chaparral", "m48 " } },
-    { tgt = 11, name = "SA-9",     pat = { "strela%-1 ", "9p31", "sa%-9[^%d]" } },
-    { tgt = 44, name = "STINGER",  pat = { "avenger", "m1097", "linebacker", "m6 ", "stinger" } },
-    { tgt = 18, name = "MANPADS",  pat = { "igla", "sa%-18", "sa%-24", "manpad" } },
-    { tgt = 21, name = "ZSU-23-4", pat = { "shilka", "zsu%-23%-4" } },
-    { tgt = 56, name = "GEPARD",   pat = { "gepard" } },
-    { tgt = 57, name = "VULCAN",   pat = { "vulcan" } },
-    { tgt = 31, name = "ZSU-57",   pat = { "zsu%-?57", "zsu_57" } },
-    { tgt = 30, name = "ZU-23",    pat = { "zu%-23" } },
-    { tgt = 26, name = "AAA",      pat = { "c%-ram", "phalanx", "flak", "bofors", "s%-60", "ks%-19", "aaa" } },
-    { tgt = 32, name = "RADAR",    pat = { "ewr", "1l13", "55g6", "dog ear", "p%-19", "fps%-117", "radar" } },
+-- Air defence types, ordered by threat (first match wins for a group). `key` is what aircraft
+-- modules map to their own threat symbols.
+M.AD_TYPES = {
+    { key = "SA-10",     pat = { "s%-300", "5p85", "64h6", "40b6", "54k6", "sa%-10[^%d]" } },
+    { key = "SA-11",     pat = { "sa%-11[^%d]", "buk", "9a310", "9s18", "9a39" } },
+    { key = "PATRIOT",   pat = { "patriot" } },
+    { key = "SA-5",      pat = { "s%-200", "sa%-5[^%d]" } },
+    { key = "SA-2",      pat = { "snr_75", "s_75", "s%-75", "volhov", "sa%-2[^%d]" } },
+    { key = "HAWK",      pat = { "hawk" } },
+    { key = "SA-6",      pat = { "kub", "sa%-6[^%d]" } },
+    { key = "SA-3",      pat = { "s%-125", "5p73", "sa%-3[^%d]" } },
+    { key = "NASAMS",    pat = { "nasams" } },
+    { key = "SA-15",     pat = { " tor ", "9a331", "sa%-15[^%d]" } },
+    { key = "PANTSIR",   pat = { "pantsir", "panzir", "96k6" } },
+    { key = "SA-19",     pat = { "tunguska", "2s6", "sa%-19[^%d]" } },
+    { key = "ROLAND",    pat = { "roland" } },
+    { key = "SA-8",      pat = { "osa ", "9a33 ", "sa%-8[^%d]" } },
+    { key = "RAPIER",    pat = { "rapier" } },
+    { key = "HQ-7",      pat = { "hq%-7" } },
+    { key = "SA-13",     pat = { "strela%-10", "sa%-13[^%d]" } },
+    { key = "CHAPARRAL", pat = { "chaparral", "m48 " } },
+    { key = "SA-9",      pat = { "strela%-1 ", "9p31", "sa%-9[^%d]" } },
+    { key = "STINGER",   pat = { "avenger", "m1097", "linebacker", "m6 ", "stinger" } },
+    { key = "MANPADS",   pat = { "igla", "sa%-18", "sa%-24", "manpad" } },
+    { key = "ZSU-23-4",  pat = { "shilka", "zsu%-23%-4" } },
+    { key = "GEPARD",    pat = { "gepard" } },
+    { key = "VULCAN",    pat = { "vulcan" } },
+    { key = "ZSU-57",    pat = { "zsu%-?57", "zsu_57" } },
+    { key = "ZU-23",     pat = { "zu%-23" } },
+    { key = "AAA",       pat = { "c%-ram", "phalanx", "flak", "bofors", "s%-60", "ks%-19", "aaa" } },
+    { key = "RADAR",     pat = { "ewr", "1l13", "55g6", "dog ear", "p%-19", "fps%-117", "radar" } },
 }
-local GENERIC_AD = { tgt = 2, name = "SAM" }   -- GU (Generic Air Defense Unit)
+M.GENERIC_AD = "SAM"   -- SAM site whose type could not be recognised
 
--- Ground unit classes for Control Measures; ids = {friendly, enemy}.
-local GROUND_CLASSES = {
-    { key = "armor", ids = { 14, 34 }, pat = { "t%-%d%d", "t90", "abrams", "m%-1 ", "leopard", "challenger",
+-- Ground unit classes (ties resolved by table order).
+M.GROUND_CLASSES = {
+    { key = "armor", pat = { "t%-%d%d", "t90", "abrams", "m%-1 ", "leopard", "challenger",
         "leclerc", "merkava", "pt_76", "m%-60", "chieftain", "zbd", "ztz", "tank" } },
-    { key = "mech",  ids = { 29, 43 }, pat = { "bmp", "bmd", "btr", "bradley", "m%-2 ", "marder", "lav",
+    { key = "mech",  pat = { "bmp", "bmd", "btr", "bradley", "m%-2 ", "marder", "lav",
         "stryker", "m%-113", "mtlb", "brdm", "cobra", "aav", "warrior", "mcv", "zbl", "bdrm", "ifv", "apc" } },
-    { key = "arty",  ids = { 23, 39 }, pat = { "msta", "sau ", "2s1", "2s3", "2s9", "2s19", "m%-109", "paladin",
+    { key = "arty",  pat = { "msta", "sau ", "2s1", "2s3", "2s9", "2s19", "m%-109", "paladin",
         "grad", "uragan", "smerch", "mlrs", "himars", "bm%-", "mortar", "m777", "2a18", "b8m1", "howitzer" } },
-    { key = "inf",   ids = { 22, 41 }, pat = { "infantry", "soldier", "paratrooper", "insurgent" } },
+    { key = "inf",   pat = { "infantry", "soldier", "paratrooper", "insurgent" } },
 }
-local GENERIC_IDS = { 24, 46 }         -- FU / EU
-local FRIENDLY_AD_ID = 12              -- CTRLM "AD (Friendly Air Defense)"
-local FARP_ID = 68                     -- CTRLM "FC (FARP, Fuel and Ammo)"
-local CLASS_NAMES = { armor = "ARMOR", mech = "MECH", arty = "ARTY", inf = "INF", generic = "UNIT" }
+M.GENERIC_CLASS = "generic"
 
 local function norm(s)
     return " " .. string.lower(tostring(s or "")) .. " "
@@ -172,54 +212,39 @@ local function matchAny(s, pats)
     return false
 end
 
--- Returns AD_TYPES entry for the most dangerous air defence member, or nil.
+-- Key of the most dangerous air defence type among `types`, or nil.
 function M.adTypeOf(types)
     local normed = {}
     for i, t in ipairs(types) do normed[i] = norm(t) end
-    for _, ad in ipairs(AD_TYPES) do
+    for _, ad in ipairs(M.AD_TYPES) do
         for _, s in ipairs(normed) do
-            if matchAny(s, ad.pat) then return ad end
+            if matchAny(s, ad.pat) then return ad.key end
         end
     end
     return nil
 end
 
--- Returns class key ("armor", "mech", "arty", "inf" or "generic") by member majority.
+-- Class key ("armor", "mech", "arty", "inf" or "generic") by member majority.
 function M.groundClassOf(types)
-    local counts, bestKey, bestN = {}, "generic", 0
+    local counts, bestKey, bestN = {}, M.GENERIC_CLASS, 0
     for _, t in ipairs(types) do
         local s = norm(t)
-        for _, c in ipairs(GROUND_CLASSES) do
+        for _, c in ipairs(M.GROUND_CLASSES) do
             if matchAny(s, c.pat) then
                 counts[c.key] = (counts[c.key] or 0) + 1
                 break
             end
         end
     end
-    for _, c in ipairs(GROUND_CLASSES) do   -- ties resolved by table order
+    for _, c in ipairs(M.GROUND_CLASSES) do
         local n = counts[c.key] or 0
         if n > bestN then bestKey, bestN = c.key, n end
     end
     return bestKey
 end
 
-local function groundIdOf(key, friendly)
-    local idx = friendly and 1 or 2
-    for _, c in ipairs(GROUND_CLASSES) do
-        if c.key == key then return c.ids[idx] end
-    end
-    return GENERIC_IDS[idx]
-end
-
-local function asciiUpper(s, maxLen)
-    s = string.upper(string.gsub(tostring(s or ""), "[^%w%s%-%._/()+]", ""))
-    s = string.gsub(s, "%s+", " ")
-    if maxLen and #s > maxLen then s = string.sub(s, 1, maxLen) end
-    return s
-end
-
 ------------------------------------------------------------------------------
--- candidate collection
+-- situation
 ------------------------------------------------------------------------------
 
 local function sideKey(s)
@@ -228,239 +253,126 @@ local function sideKey(s)
     return nil
 end
 
-local function collect(status, units, mySide)
-    local front = {}
+-- situation = {
+--     side   = "blue",
+--     front  = { {x, z}, ... },                     -- front line polyline
+--     groups = { {x, z, friendly, type, count, class, ad, adLead}, ... }
+--              -- live ground groups; ad = AD key if any member is air defence,
+--              -- adLead = the lead unit itself is that AD type
+--     sites  = { {x, z, friendly, ad, name}, ... }  -- SAM sites not covered by a live AD group
+--     farps  = { {x, z, friendly, name, kind}, ... } -- FARPs and FOBs, twin pads merged
+--     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
+-- }
+function M.situation(status, units, mySide)
+    status, units = status or {}, units or {}
+    mySide = sideKey(mySide) or "blue"
+    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {} }
+
     for _, p in ipairs(status.front or {}) do
-        if p.x and p.z then front[#front + 1] = { x = p.x, z = p.z } end
+        if p.x and p.z then s.front[#s.front + 1] = { x = p.x, z = p.z } end
     end
 
-    local ctrlm, tgt = {}, {}
-    local enemyAD = {}
-
-    -- live ground groups
-    for _, g in ipairs(units and units.groups or {}) do
+    for _, g in ipairs(units.groups or {}) do
         local side = sideKey(g.side)
         if g.cat == "ground" and side and g.x and g.z then
-            local types = g.types or { g.type }
+            local types = g.types or {}
             if #types == 0 then types = { g.type } end
-            local friendly = side == mySide
             local ad = M.adTypeOf(types)
-            local count = g.count or #types
-            local adNote = ad and (ad.name .. ((M.adTypeOf({ g.type }) == ad) and "" or (" + " .. (g.type or "")))
-                .. " X" .. count)
-            if ad and not friendly then
-                enemyAD[#enemyAD + 1] = { x = g.x, z = g.z, ad = ad, note = asciiUpper(adNote, 40) }
-            elseif ad then
-                ctrlm[#ctrlm + 1] = { x = g.x, z = g.z, id = FRIENDLY_AD_ID, note = asciiUpper("OWN AD " .. adNote, 40) }
-            else
-                local cls = M.groundClassOf(types)
-                ctrlm[#ctrlm + 1] = { x = g.x, z = g.z, id = groundIdOf(cls, friendly),
-                    note = asciiUpper((friendly and "OWN " or "ENEMY ") .. CLASS_NAMES[cls] .. " "
-                        .. (g.type or "") .. " X" .. count, 40) }
-            end
+            s.groups[#s.groups + 1] = {
+                x = g.x, z = g.z, friendly = side == mySide,
+                type = g.type or "", count = g.count or #types,
+                class = M.groundClassOf(types), ad = ad,
+                adLead = ad ~= nil and M.adTypeOf({ g.type }) == ad,
+            }
         end
     end
 
-    -- SAM sites from status.json (may be despawned while nobody is near, still a threat)
+    -- SAM sites (may be despawned while nobody is near, still a threat)
     for _, o in ipairs(status.strong or {}) do
         local side = sideKey(o.side)
-        if (o.kind == "SAM" or o.kind == "Sam") and side and side ~= mySide and not o.dead and o.x and o.z then
+        if (o.kind == "SAM" or o.kind == "Sam") and side and not o.dead and o.x and o.z then
+            local friendly = side == mySide
             local covered = false
-            for _, a in ipairs(enemyAD) do
-                if dist(a, o) < AD_DEDUP_M then covered = true break end
+            for _, g in ipairs(s.groups) do
+                if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
             end
             if not covered then
-                local ad = M.adTypeOf({ o.name or "" }) or GENERIC_AD
-                enemyAD[#enemyAD + 1] = { x = o.x, z = o.z, ad = ad,
-                    note = asciiUpper(ad.name .. " SITE " .. string.gsub(o.name or "", "^SAM%s*", ""), 40) }
+                s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
+                    ad = M.adTypeOf({ o.name or "" }) or M.GENERIC_AD,
+                    name = (string.gsub(o.name or "", "^SAM%s*", "")) }
             end
         end
     end
-    for _, a in ipairs(enemyAD) do
-        tgt[#tgt + 1] = { x = a.x, z = a.z, id = a.ad.tgt, note = a.note }
-    end
 
-    -- FARPs (and FOBs), merging twin pads like the map does
-    local farps = {}
     for _, o in ipairs(status.objectives or {}) do
         local owner = sideKey(o.owner)
         if (o.kind == "FARP" or o.kind == "FOB") and owner and o.x and o.z then
+            local friendly = owner == mySide
             local twin = false
-            for _, f in ipairs(farps) do
-                if f.owner == owner and dist(f, o) <= FARP_TWIN_M then twin = true break end
+            for _, f in ipairs(s.farps) do
+                if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
             end
             if not twin then
                 local name = tostring(o.name or "")
                 if o.kind == "FARP" then name = "FARP " .. name end
-                farps[#farps + 1] = { x = o.x, z = o.z, owner = owner, name = name }
+                s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
             end
         end
     end
-    for _, f in ipairs(farps) do
-        local friendly = f.owner == mySide
-        ctrlm[#ctrlm + 1] = { x = f.x, z = f.z, id = FARP_ID, farp = true, friendly = friendly,
-            note = asciiUpper(f.name .. (friendly and " OWN" or " ENEMY"), 40) }
-    end
 
-    return front, ctrlm, tgt
-end
-
-local function byFront(list, front, limit)
-    for _, p in ipairs(list) do
-        p.d = distToPolyline(p.x, p.z, front)
-    end
-    table.sort(list, function(a, b) return a.d < b.d end)
-    local out = {}
-    for i = 1, math.min(limit, #list) do out[i] = list[i] end
-    return out
+    return s
 end
 
 ------------------------------------------------------------------------------
--- cartridges
+-- aircraft modules
 ------------------------------------------------------------------------------
 
-local function elevation(env, x, z)
-    if env.getHeight then
-        local ok, h = pcall(env.getHeight, x, z)
-        if ok and type(h) == "number" then return math.floor(h + 0.5) end
-    end
-    return 0
-end
-
-local function buildAH64(env, front, ctrlm, tgt)
-    local L = M.LIMITS
-    local ctrlmPts, tgtPts = {}, {}
-    local farpOwn, farpEnemy = 0, 0
-    local selected
-    if L.CTRLM_FARPS then
-        local farps, others = {}, {}
-        for _, p in ipairs(ctrlm) do
-            if p.farp then farps[#farps + 1] = p else others[#others + 1] = p end
-        end
-        selected = byFront(farps, front, math.min(L.CTRLM_FARPS, L.CTRLM))
-        for _, p in ipairs(byFront(others, front, L.CTRLM - #selected)) do selected[#selected + 1] = p end
-        selected = byFront(selected, front, L.CTRLM)
-    else
-        selected = byFront(ctrlm, front, L.CTRLM)
-    end
-    for i, p in ipairs(selected) do
-        local num = 50 + i
-        local text = "C" .. num
-        if p.farp then
-            if p.friendly then farpOwn = farpOwn + 1; text = string.format("F%02d", farpOwn)
-            else farpEnemy = farpEnemy + 1; text = string.format("E%02d", farpEnemy) end
-        end
-        ctrlmPts[i] = { alt = elevation(env, p.x, p.z), id = p.id, note = p.note, num = num, text = text,
-            x = round(p.x), y = round(p.z) }
-    end
-    for i, p in ipairs(byFront(tgt, front, L.TGT)) do
-        tgtPts[i] = { alt = elevation(env, p.x, p.z), id = p.id, note = p.note, num = i,
-            text = string.format("T%02d", i), x = round(p.x), y = round(p.z) }
-    end
-
-    local lines = {}
-    if #front >= 2 then
-        for _, seg in ipairs(M.chain(front, L.AH64_LINES, L.AH64_LINE_PTS)) do
-            local vertices = {}
-            for j, p in ipairs(seg) do vertices[j] = { x = round(p.x), y = round(p.z) } end
-            lines[#lines + 1] = { note = "FRONT", text = "", type_num = 4, vertices = vertices } -- 4 = FLOT
-        end
-    end
-
-    return {
-        type = "AH-64D_BLK_II",
-        name = M.CARTRIDGE_NAME,
-        terrain = env.terrain,
-        NAV = {
-            MissionFile = 1,
-            Mission_1 = {
-                Points = {
-                    WPTHZ = { isEnabled = false, POINTS = {} },
-                    CTRLM = { isEnabled = true, POINTS = ctrlmPts },
-                    TGT   = { isEnabled = true, POINTS = tgtPts },
-                },
-                Lines = lines,
-            },
-        },
-    }, { ctrlm = #ctrlmPts, tgt = #tgtPts, lines = #lines }
-end
-
-local function buildF16(env, front)
-    local pts = {}
-    if #front >= 2 then
-        for i, p in ipairs(M.simplify(front, M.LIMITS.F16_PTS)) do
-            pts[i] = { alt = elevation(env, p.x, p.z), id = "GEO_LINES" .. (30 + i), number = i,
-                L1 = true, L2 = false, L3 = false, L4 = false, note = "FRONT", x = round(p.x), y = round(p.z) }
-        end
-    end
-    return {
-        type = "F-16C_50",
-        name = M.CARTRIDGE_NAME,
-        terrain = env.terrain,
-        MPD = { terrain = env.terrain, mirror_GEO_LINES = false, GEO_LINES = pts },
-    }, { points = #pts }
-end
-
-local function buildF18(env, front)
-    local L = M.LIMITS
-    local flot = {}
-    if #front >= 2 then
-        for n, seg in ipairs(M.chain(front, L.F18_LINES, L.F18_LINE_PTS)) do
-            local points = {}
-            for j, p in ipairs(seg) do
-                points[j] = { id = "FLOT_" .. n .. "_PT_" .. j, x = round(p.x), y = round(p.z) }
-            end
-            flot[n] = { id = "FLOT_" .. n, note = "FRONT", num = n, points = points }
-        end
-    end
-    return {
-        type = "FA-18C_hornet",
-        name = M.CARTRIDGE_NAME,
-        terrain = env.terrain,
-        SA = { FAOR_FLOT = { FAOR = {}, FLOT = flot }, mirror_MEZ_THRTS = true },
-    }, { lines = #flot }
-end
-
-local function buildF14(env, front)
-    local L = M.LIMITS
-    local lines = {}
-    if #front >= 2 then
-        for _, seg in ipairs(M.chain(front, L.F14_LINES, L.F14_LINE_PTS)) do
-            local points = {}
-            for j, p in ipairs(seg) do
-                local lat, lon = 0, 0
-                if env.toLatLon then
-                    local ok, a, b = pcall(env.toLatLon, p.x, p.z)
-                    if ok and a then lat, lon = a, b end
-                end
-                points[j] = { elev = elevation(env, p.x, p.z), lat = lat, lon = lon, x = round(p.x), y = round(p.z) }
-            end
-            lines[#lines + 1] = { closed = false, points = points }
-        end
-    end
-    return {
-        type = "F-14BU",
-        name = M.CARTRIDGE_NAME,
-        cartridge_name = M.CARTRIDGE_NAME,
-        terrain = env.terrain,
-        NAV = { { name = "FRONT", waypoints = {}, lines = lines, additional_points = {}, route_as_line = false } },
-    }, { lines = #lines }
-end
-
--- Returns list of { type = <unit type>, data = <cartridge data table>, stats = {...} }.
-function M.build(status, units, mySide, env)
-    mySide = sideKey(mySide) or "blue"
-    local front, ctrlm, tgt = collect(status or {}, units or {}, mySide)
+local function merge(defaults, overrides)
     local out = {}
-    local function add(fn, ...)
-        local data, stats = fn(env, ...)
-        out[#out + 1] = { type = data.type, data = data, stats = stats }
-    end
-    add(buildAH64, front, ctrlm, tgt)
-    add(buildF16, front)
-    add(buildF18, front)
-    add(buildF14, front)
+    for k, v in pairs(defaults or {}) do out[k] = v end
+    for k, v in pairs(overrides or {}) do out[k] = v end
     return out
+end
+
+-- Loads aircraft modules from `dir` (with trailing separator); `files` = list of file names.
+-- Files starting with "_" (templates) are skipped. Returns modules sorted by file name, errors.
+function M.loadAircraft(dir, files)
+    local names, modules, errors = {}, {}, {}
+    for _, f in ipairs(files) do
+        if string.match(f, "%.lua$") and not string.match(f, "^_") then names[#names + 1] = f end
+    end
+    table.sort(names)
+    for _, f in ipairs(names) do
+        local ok, mod = pcall(dofile, dir .. f)
+        if ok and type(mod) == "table" and type(mod.type) == "string" and type(mod.build) == "function" then
+            modules[#modules + 1] = mod
+        else
+            errors[#errors + 1] = f .. ": " .. (ok and "must return { type = ..., build = function }" or tostring(mod))
+        end
+    end
+    return modules, errors
+end
+
+-- Runs every module over the situation. `overrides[type]` merges into module options;
+-- `enabled = false` there skips the module. A failing module does not stop the others.
+-- Returns list of { type, data, stats }, list of error strings.
+function M.build(status, units, mySide, env, modules, overrides)
+    local situation = M.situation(status, units, mySide)
+    situation.env = env
+    local out, errors = {}, {}
+    for _, mod in ipairs(modules) do
+        local opt = merge(mod.options, overrides and overrides[mod.type])
+        if opt.enabled ~= false then
+            local ok, data, stats = pcall(mod.build, situation, M, opt)
+            if ok and type(data) == "table" then
+                data.type = mod.type
+                out[#out + 1] = { type = mod.type, data = data, stats = stats or {} }
+            else
+                errors[#errors + 1] = mod.type .. ": " .. tostring(data)
+            end
+        end
+    end
+    return out, errors
 end
 
 return M

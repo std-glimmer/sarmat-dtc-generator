@@ -22,8 +22,9 @@ try {
     Write-Host "== hook"
     # fake Saved Games folder on a short path (os.execute command length limit)
     $sim = Join-Path $env:TEMP ("sdtc" + (Get-Random -Maximum 99999))
-    New-Item -ItemType Directory -Force "$sim\Scripts\SarmatDTC", "$sim\srv" | Out-Null
+    New-Item -ItemType Directory -Force "$sim\Scripts\SarmatDTC\aircraft", "$sim\srv" | Out-Null
     Get-ChildItem $scriptDir -File | Copy-Item -Destination "$sim\Scripts\SarmatDTC\"
+    Get-ChildItem "$scriptDir\aircraft" -File | Copy-Item -Destination "$sim\Scripts\SarmatDTC\aircraft\"
     Copy-Item "$PSScriptRoot\fixtures\*.json" "$sim\srv\"
     $base = "file:///" + (($sim -replace '\\', '/') -replace ' ', '%20') + "/srv/"
     & $luae "$PSScriptRoot\test_hook.lua" $sim $base

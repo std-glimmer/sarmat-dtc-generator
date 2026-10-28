@@ -22,6 +22,14 @@ package.loaded['lfs'] = {
     writedir = function() return writedir end,
     mkdir = function(p) os.execute('mkdir "' .. p .. '" 2>nul') end,
     attributes = function(p) return exists(p) and 'file' or nil end,
+    dir = function(p)
+        local files = {}
+        local h = io.popen('dir /b "' .. p .. '"')
+        for line in h:lines() do files[#files + 1] = line end
+        h:close()
+        local i = 0
+        return function() i = i + 1 return files[i] end
+    end,
 }
 package.loaded['terrain'] = {
     GetTerrainConfig = function(k)
@@ -111,6 +119,7 @@ end
 
 dofile(writedir .. 'Scripts\\SarmatDTC\\SarmatDTC.lua')
 local cb = DCS.cb
+check(logged('aircraft modules: AH%-64D_BLK_II, F%-14BU, F%-16C_50, FA%-18C_hornet'), 'aircraft modules not discovered')
 
 print('-- non-SARMAT server is ignored')
 server = 'Some Other Server'

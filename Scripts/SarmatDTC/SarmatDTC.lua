@@ -5,6 +5,7 @@
 -- Flow: mission loaded on a SARMAT server -> map data is downloaded in background (fetch.vbs -> fetch.cmd -> curl.exe);
 -- player takes a slot -> cartridges are written for the slot's coalition (and rewritten when
 -- the fresh download finishes). Files: Saved Games/DCS.openbeta/DTC/SARMAT_<type>.dtc
+-- One cartridge per module in Scripts/SarmatDTC/aircraft/*.lua (see aircraft/_template.lua).
 
 local lfs = require('lfs')
 
@@ -16,9 +17,11 @@ local CONFIG = {
     REFETCH_SEC   = 60,            -- reuse downloaded data if younger than this
     FETCH_TIMEOUT = 150,
     SHOW_CHAT     = true,          -- local-only chat notification after writing cartridges
-    CTRLM_FARPS   = nil,           -- AH-64 CTRLM: nil = FARPs and units share 49 slots by distance to front,
-                                   -- number = reserve up to that many slots for FARPs
     LOG_SLOT      = true,          -- write own slot details (group, start airbase/FARP, position) to dcs.log
+    -- Per-aircraft overrides of module `options` (aircraft/<type>.lua); `enabled = false` skips a module.
+    -- Examples: ['AH-64D_BLK_II'] = { CTRLM_FARPS = 15 },  ['F-14BU'] = { enabled = false },
+    AIRCRAFT      = {
+    },
 }
 
 local LOG_TAG   = 'SARMAT.DTC'
@@ -27,12 +30,27 @@ local CACHE_DIR = BASE_DIR .. 'cache'
 local DTC_DIR   = lfs.writedir() .. 'DTC\\'
 
 local core = dofile(BASE_DIR .. 'SarmatDTC_core.lua')
-core.LIMITS.CTRLM_FARPS = CONFIG.CTRLM_FARPS
 local JSON = dofile('Scripts/JSON.lua')
 local Terrain = nil
 
 local function info(msg)  log.write(LOG_TAG, log.INFO, msg) end
 local function warn(msg)  log.write(LOG_TAG, log.WARNING, msg) end
+
+local function loadAircraft()
+    local dir = BASE_DIR .. 'aircraft\\'
+    local files = {}
+    local ok, err = pcall(function()
+        for f in lfs.dir(dir) do files[#files + 1] = f end
+    end)
+    if not ok then warn('cannot list ' .. dir .. ': ' .. tostring(err)) end
+    local modules, errors = core.loadAircraft(dir, files)
+    for _, e in ipairs(errors) do warn('aircraft module skipped: ' .. e) end
+    local types = {}
+    for i, m in ipairs(modules) do types[i] = m.type end
+    info('aircraft modules: ' .. table.concat(types, ', '))
+    return modules
+end
+local aircraft = loadAircraft()
 
 local state = {}
 
@@ -190,11 +208,12 @@ local function generate()
         getHeight = t and t.GetHeight,
         toLatLon  = t and t.convertMetersToLatLon,
     }
-    local okBuild, cartridges = pcall(core.build, status, units, state.side, env)
+    local okBuild, cartridges, errors = pcall(core.build, status, units, state.side, env, aircraft, CONFIG.AIRCRAFT)
     if not okBuild then
         warn('build failed: ' .. tostring(cartridges))
         return
     end
+    for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
 
     lfs.mkdir(DTC_DIR)
     local summary = {}
