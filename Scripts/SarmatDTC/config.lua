@@ -9,6 +9,17 @@ return {
         "F-14BU",
     },
 
+    -- Base DCS cartridge per aircraft (DCS native .dtc only): every field the script does not fill
+    -- (radios, CMDS, laser codes, waypoints, ...) is taken from it. File name in
+    -- Saved Games\DCS.openbeta\DTC or an absolute path. Navigation data of a base file made on
+    -- another map is not used. Must not be the generated SARMAT_<type>.dtc itself.
+    BASE_DTC = {
+        -- ["AH-64D_BLK_II"] = "AH-64D_BLK_II_DTC_SAR_3.dtc",
+        -- ["F-16C_50"]      = "F-16C_50_DTC_PD.dtc",
+        -- ["FA-18C_hornet"] = "FA-18C_hornet_DTC_PD_1.dtc",
+        -- ["F-14BU"]        = "F-14BU_DTC_SAR_1.dtc",
+    },
+
     -- Per-aircraft overrides of the module options (see `options` in aircraft/<type>.lua)
     -- and of its outputs (`outputs` = { [output id] = { enabled = ..., dir = ..., file = ... } };
     -- the native DCS cartridge has id "dcs-dtc").

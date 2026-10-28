@@ -495,6 +495,67 @@ function M.loadAircraft(dir, files)
     return modules, errors
 end
 
+------------------------------------------------------------------------------
+-- base cartridge (config.lua BASE_DTC): our data over a copy of the user's DCS DTC
+------------------------------------------------------------------------------
+
+local function deepCopy(v)
+    if type(v) ~= "table" then return v end
+    local t = {}
+    for k, x in pairs(v) do t[k] = deepCopy(x) end
+    return t
+end
+
+local function splitPath(path)
+    local parts = {}
+    for p in string.gmatch(path, "[^%.]+") do parts[#parts + 1] = p end
+    return parts
+end
+
+local function overlay(dst, src, byIndex, path)
+    for k, v in pairs(src) do
+        local d = dst[k]
+        local p = path and (path .. "." .. tostring(k)) or tostring(k)
+        if type(v) ~= "table" then
+            dst[k] = v
+        elseif next(v) == nil then
+            if d == nil then dst[k] = {} end             -- empty: keep what the base has
+        elseif byIndex[p] and type(d) == "table" then
+            for i, x in ipairs(v) do d[i] = deepCopy(x) end   -- replace only our elements
+        elseif #v > 0 or type(d) ~= "table" or (#d > 0) then
+            dst[k] = deepCopy(v)                         -- lists we filled replace the base list
+        else
+            overlay(d, v, byIndex, p)                    -- dictionaries merge
+        end
+    end
+end
+
+-- Returns a copy of `base` (cartridge "data") with `ours` laid over it, and the list of dropped paths.
+-- spec = { terrainPaths = {"NAV", "MPD.NAV_PTS", ...}, byIndex = {"NAV"} } (module field `base`).
+-- terrainPaths are removed from the base when its terrain is known and differs from `terrain`.
+-- Rules: scalars and non-empty lists from `ours` replace, dictionaries merge, an empty table in
+-- `ours` keeps the base value, byIndex lists replace element by element.
+function M.applyBase(base, ours, spec, terrain)
+    spec = spec or {}
+    local merged = deepCopy(base)
+    local dropped = {}
+    if base.terrain and terrain and base.terrain ~= terrain then
+        for _, path in ipairs(spec.terrainPaths or {}) do
+            local parts = splitPath(path)
+            local t = merged
+            for i = 1, #parts - 1 do t = type(t) == "table" and t[parts[i]] or nil end
+            if type(t) == "table" and t[parts[#parts]] ~= nil then
+                t[parts[#parts]] = nil
+                dropped[#dropped + 1] = path
+            end
+        end
+    end
+    local byIndex = {}
+    for _, p in ipairs(spec.byIndex or {}) do byIndex[p] = true end
+    overlay(merged, ours, byIndex, nil)
+    return merged, dropped
+end
+
 -- Keeps the modules whose type is in `list` (config.lua AIRCRAFT), in list order; nil list keeps all.
 -- Returns selected modules, list entries without a module.
 function M.selectModules(modules, list)
@@ -530,9 +591,10 @@ end
 
 -- Runs every module over the situation. `overrides[type]` merges into module options
 -- (`enabled = false` skips the module); `overrides[type].outputs[id]` merges into an output
--- (`enabled`, `dir`, `file`). A failing module or output does not stop the others.
--- Returns list of { type, id, format, dir, file, content, stats }, list of error strings.
-function M.build(status, units, mySide, env, modules, overrides)
+-- (`enabled`, `dir`, `file`). `bases[type]` = base cartridge data (config.lua BASE_DTC) that the
+-- native cartridge is laid over (M.applyBase). A failing module or output does not stop the others.
+-- Returns list of { type, id, format, dir, file, content, stats, base, dropped }, list of error strings.
+function M.build(status, units, mySide, env, modules, overrides, bases)
     local situation = M.situation(status, units, mySide)
     situation.env = env
     if env.spawn and env.spawn.x and env.spawn.z then situation.spawn = env.spawn end
@@ -549,13 +611,18 @@ function M.build(status, units, mySide, env, modules, overrides)
                 -- the native cartridge is always built (other outputs may reuse it), written only if enabled
                 if o2.enabled ~= false or o2.id == M.NATIVE_OUTPUT then
                     local ok, content, stats = pcall(o2.build, situation, M, opt, built)
+                    local base, dropped = bases and bases[mod.type], nil
+                    if ok and content ~= nil and o2.id == M.NATIVE_OUTPUT and type(base) == "table" then
+                        ok, content, dropped = pcall(M.applyBase, base, content, mod.base, env.terrain)
+                    end
                     if ok and content ~= nil then
                         if o2.format == "dcs-dtc" and type(content) == "table" then content.type = mod.type end
                         built[o2.id] = content
                         if o2.enabled ~= false then
                             out[#out + 1] = { type = mod.type, id = o2.id, format = o2.format or "json",
                                 dir = expand(o2.dir or "DTC", vars), file = expand(o2.file, vars),
-                                content = content, stats = stats or {} }
+                                content = content, stats = stats or {},
+                                base = dropped ~= nil, dropped = dropped }
                         end
                     else
                         errors[#errors + 1] = mod.type .. "/" .. o2.id .. ": " .. tostring(ok and "no content" or content)

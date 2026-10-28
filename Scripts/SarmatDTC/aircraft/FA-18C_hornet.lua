@@ -4,6 +4,7 @@
 
 return {
     type = "FA-18C_hornet",
+    base = { terrainPaths = { "WYPT", "GPS_WYPT", "TCN", "SA.CAP_PTS", "SA.CORRIDORS", "SA.FAOR_FLOT", "SA.MEZ_THRTS" } },
     options = {
         LINES        = 3,
         LINE_PTS     = 7,

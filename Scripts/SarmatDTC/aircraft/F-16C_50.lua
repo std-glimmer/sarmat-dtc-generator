@@ -16,6 +16,7 @@ local DEF_NUM = {
 
 return {
     type = "F-16C_50",
+    base = { terrainPaths = { "MPD.NAV_PTS", "MPD.DEST", "MPD.GEO_LINES", "MPD.THREAT_PTS", "MPD.VIPVRP" } },
     options = {
         POINTS    = 25,     -- GEO LINES
         THREATS   = 15,     -- THREAT PTS (0 = keep the mission's threats)

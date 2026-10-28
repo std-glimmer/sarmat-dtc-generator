@@ -4,6 +4,9 @@
 
 return {
     type = "F-14BU",
+    -- plan 1 is ours, plans 2..12 come from the base file; the F-14 editor writes no terrain id,
+    -- so a base without it keeps its navigation data
+    base = { terrainPaths = { "NAV", "JDAM" }, byIndex = { "NAV" } },
     options = {
         LINES    = 2,
         LINE_PTS = 9,

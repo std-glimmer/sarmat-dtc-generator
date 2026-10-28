@@ -34,6 +34,7 @@ end
 
 return {
     type = "AH-64D_BLK_II",
+    base = { terrainPaths = { "NAV" } },   -- config.lua BASE_DTC: map-bound sections of the base file
     options = {
         CTRLM       = 49,   -- C51..C99
         CTRLM_FARPS = nil,  -- nil: FARPs compete with units by distance to front; N: reserve up to N slots
@@ -124,7 +125,6 @@ return {
             MissionFile = 1,
             Mission_1 = {
                 Points = {
-                    WPTHZ = { isEnabled = false, POINTS = {} },
                     CTRLM = { isEnabled = true, POINTS = ctrlmPts },
                     TGT   = { isEnabled = true, POINTS = tgtPts },
                 },

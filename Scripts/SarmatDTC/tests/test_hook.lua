@@ -135,8 +135,18 @@ return {
         "NOPE",
     },
     OPTIONS = { ZZ_TEST = { outputs = { env = { dir = "%TEMP%\\]] .. string.match(envDir, '[^\\]+$') .. [[" } } } },
+    BASE_DTC = {
+        ["AH-64D_BLK_II"] = "MyApache.dtc",          -- valid base
+        ["F-16C_50"]      = "MyApache.dtc",          -- wrong cartridge type
+        ["FA-18C_hornet"] = "SARMAT_FA-18C_hornet.dtc", -- the generated file itself
+        ["F-14BU"]        = "missing.dtc",
+    },
 }
 ]])
+os.execute('mkdir "' .. writedir .. 'DTC" 2>nul')
+writeFile(writedir .. 'DTC\\MyApache.dtc', dofile('Scripts/JSON.lua'):encode_pretty({ name = '', type = 'AH-64D_BLK_II',
+    data = { type = 'AH-64D_BLK_II', name = 'MY', terrain = 'Syria', Radios = { VHF = 121.5 },
+        NAV = { Mission_1 = { Points = { WPTHZ = { isEnabled = true, POINTS = { { num = 1, text = 'W01' } } } } } } } }))
 writeFile(writedir .. 'Scripts\\SarmatDTC\\aircraft\\ZZ_TEST.lua', [[
 return {
     type = "ZZ_TEST",
@@ -185,6 +195,13 @@ check(#chats == 1, 'expected one chat message, got ' .. #chats)
 check(logged('base=Hatay'), 'airfield slot not resolved')
 check(logged('cartridges written for blue around Hatay'), 'spawn base not used for generation')
 local blue = readAH64()
+
+print('-- base DTC from config.lua')
+check(logged('AH%-64D_BLK_II %+base'), 'AH-64 base DTC not used')
+check(string.find(blue, '121.5', 1, true) and string.find(blue, '"W01"', 1, true), 'AH-64 base fields missing in the cartridge')
+check(logged('BASE_DTC for F%-16C_50 is a AH%-64D_BLK_II cartridge'), 'wrong base type not reported')
+check(logged('BASE_DTC for FA%-18C_hornet is the generated file itself'), 'own output as base not rejected')
+check(logged('BASE_DTC for F%-14BU not found'), 'missing base not reported')
 
 print('-- extra outputs: text (relative + {side}), lua (absolute), json (%TEMP%)')
 local txtPath = writedir .. 'Exports\\blue\\ZZ_TEST.txt'

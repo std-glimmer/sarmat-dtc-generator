@@ -137,6 +137,78 @@ do
         and back.name == value.name and back.nested.list[2] == 4, "toLua round trip")
 end
 
+-- base cartridge (config.lua BASE_DTC)
+do
+    local function nativeOf(mod, base)
+        local out, errors = core.build(status, units, "blue", env, { mods[mod] }, {}, { [mod] = base })
+        check(#errors == 0, mod .. " with base: " .. table.concat(errors, "; "))
+        return out[1].content, out[1]
+    end
+
+    -- merge rules
+    local m = core.applyBase({ a = { 1, 2 }, b = { x = 1, y = 2 }, c = "base", d = { 1, 2, 3 } },
+        { a = {}, b = { y = 3, z = 4 }, c = "ours", d = { 9 } })
+    check(m.a[2] == 2, "empty table in ours must keep the base value")
+    check(m.b.x == 1 and m.b.y == 3 and m.b.z == 4, "dictionaries must merge")
+    check(m.c == "ours" and #m.d == 1 and m.d[1] == 9, "scalars and lists from ours must replace")
+    local baseT = { keep = { 1 } }
+    core.applyBase(baseT, { keep = { 2 } })
+    check(baseT.keep[1] == 1, "applyBase must not modify the base")
+
+    -- AH-64: everything we do not fill comes from the base
+    local oldPts = {}
+    for i = 1, 60 do oldPts[i] = { num = 50 + i, text = "OLD", x = 0, y = 0 } end
+    local apacheBase = {
+        type = "AH-64D_BLK_II", name = "MY", terrain = "Syria",
+        Radios = { VHF = 121.5 }, Laser = { A = 1688 },
+        NAV = { MissionFile = 2,
+            Mission_1 = {
+                Points = { WPTHZ = { isEnabled = true, POINTS = { { num = 1, text = "W01" } } },
+                           CTRLM = { isEnabled = false, POINTS = oldPts } },
+                Lines = { { note = "OLD LINE", type_num = 1, vertices = {} } },
+                Routes = { { Name = "ALPHA", isEnabled = true } },
+            },
+            Mission_2 = { Lines = { { note = "M2" } } } },
+    }
+    local ah, entry = nativeOf("AH-64D_BLK_II", apacheBase)
+    local m1 = ah.NAV.Mission_1
+    check(entry.base and #entry.dropped == 0, "AH-64: base not reported as used")
+    check(ah.Radios.VHF == 121.5 and ah.Laser.A == 1688, "AH-64: radios/laser not taken from base")
+    check(ah.name == core.CARTRIDGE_NAME and ah.type == "AH-64D_BLK_II" and ah.NAV.MissionFile == 1, "AH-64: header")
+    check(m1.Points.WPTHZ.isEnabled and m1.Points.WPTHZ.POINTS[1].text == "W01", "AH-64: base waypoints lost")
+    check(m1.Routes[1].Name == "ALPHA" and ah.NAV.Mission_2.Lines[1].note == "M2", "AH-64: base routes/mission 2 lost")
+    check(m1.Points.CTRLM.isEnabled and #m1.Points.CTRLM.POINTS <= 49, "AH-64: CTRLM must replace base points")
+    for _, p in ipairs(m1.Points.CTRLM.POINTS) do check(p.text ~= "OLD", "AH-64: stale base CTRLM point") end
+    check(m1.Lines[1].note == "FRONT", "AH-64: our lines must replace base lines")
+
+    -- base from another map: map-bound sections are not used, the rest is
+    apacheBase.terrain = "Caucasus"
+    ah, entry = nativeOf("AH-64D_BLK_II", apacheBase)
+    check(#entry.dropped == 1 and entry.dropped[1] == "NAV", "AH-64: NAV of another map must be dropped")
+    check(ah.Radios.VHF == 121.5 and ah.terrain == "Syria", "AH-64: radios from another-map base")
+    check(ah.NAV.Mission_2 == nil and ah.NAV.Mission_1.Points.WPTHZ == nil, "AH-64: another-map waypoints leaked")
+
+    -- F-14: plan 1 ours, other plans from base (base without terrain id keeps navigation)
+    local f14 = nativeOf("F-14BU", { type = "F-14BU", cartridge_name = "MY", CMDS = { X = 1 },
+        NAV = { { name = "P1", waypoints = { { name = "WP" } } }, { name = "P2" } }, JDAM = { stations = {} } })
+    check(f14.NAV[1].name == "FRONT" and #f14.NAV[1].waypoints == 0, "F-14: plan 1 must be ours")
+    check(f14.NAV[2] and f14.NAV[2].name == "P2" and f14.JDAM and f14.CMDS.X == 1, "F-14: base plans/JDAM/CMDS lost")
+
+    -- F/A-18: base FAOR kept, FLOT and threats ours
+    local f18 = nativeOf("FA-18C_hornet", { type = "FA-18C_hornet", terrain = "Syria", COMM = { C = 1 },
+        WYPT = { NAV_PTS = { { wypt_num = 1 } } },
+        SA = { FAOR_FLOT = { FAOR = { { id = "FAOR_1" } }, FLOT = { { id = "OLD" } } }, MEZ_THRTS = { { id = "OLD" } } } })
+    check(f18.COMM.C == 1 and f18.WYPT.NAV_PTS[1].wypt_num == 1, "F/A-18: base COMM/WYPT lost")
+    check(f18.SA.FAOR_FLOT.FAOR[1].id == "FAOR_1" and f18.SA.FAOR_FLOT.FLOT[1].id == "FLOT_1", "F/A-18: FAOR/FLOT merge")
+    check(f18.SA.MEZ_THRTS[1].id == "MEZ_THRTS_1", "F/A-18: base MEZ threats must be replaced")
+
+    -- F-16: base nav points stay, our lines/threats replace
+    local f16 = nativeOf("F-16C_50", { type = "F-16C_50", terrain = "Syria", COMM = { C = 1 },
+        MPD = { NAV_PTS = { { id = "STPT1" } }, mirror_NAV_PTS = false, GEO_LINES = { { id = "OLD" } } } })
+    check(f16.MPD.NAV_PTS[1].id == "STPT1" and f16.MPD.mirror_NAV_PTS == false and f16.COMM.C == 1, "F-16: base nav lost")
+    check(f16.MPD.GEO_LINES[1].id == "GEO_LINES31", "F-16: base geo lines must be replaced")
+end
+
 -- threat catalogue must match the DCS editors' lists
 do
     dofile(dcsDir .. "\\CoreMods\\aircraft\\F-16C\\DTC\\MPD\\THREAT_PTS_defs.lua")

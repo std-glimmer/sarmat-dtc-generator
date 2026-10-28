@@ -44,7 +44,7 @@ local function loadSettings()
         warn('cannot load config.lua (' .. tostring(cfg) .. '), using all aircraft modules')
         cfg = {}
     end
-    settings = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = cfg.OPTIONS or {} }
+    settings = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = cfg.OPTIONS or {}, BASE_DTC = cfg.BASE_DTC or {} }
 
     local dir = BASE_DIR .. 'aircraft\\'
     local files = {}
@@ -131,6 +131,43 @@ local function writeFileAtomic(path, content)
     f:close()
     os.remove(path)
     return os.rename(tmp, path)
+end
+
+-- config.lua BASE_DTC: { [type] = file name in Saved Games\DCS.openbeta\DTC or absolute path }.
+-- Decoded files are cached by path and modification time.
+local baseCache = {}
+
+local function loadBases()
+    local bases = {}
+    for unitType, name in pairs(settings.BASE_DTC or {}) do
+        local path = string.gsub(tostring(name), '/', '\\')
+        if not (string.match(path, '^%a:\\') or string.match(path, '^\\\\')) then
+            path = lfs.writedir() .. 'DTC\\' .. path
+        end
+        local own = lfs.writedir() .. 'DTC\\' .. core.FILE_PREFIX .. unitType .. '.dtc'
+        local stamp = lfs.attributes(path, 'modification')
+        if string.lower(path) == string.lower(own) then
+            warn('BASE_DTC for ' .. unitType .. ' is the generated file itself, ignored')
+        elseif not stamp then
+            warn('BASE_DTC for ' .. unitType .. ' not found: ' .. path)
+        else
+            local cached = baseCache[unitType]
+            if not (cached and cached.path == path and cached.stamp == stamp) then
+                local ok, decoded = pcall(JSON.decode, JSON, readFile(path) or '')
+                cached = { path = path, stamp = stamp }
+                if not (ok and type(decoded) == 'table' and type(decoded.data) == 'table') then
+                    warn('BASE_DTC for ' .. unitType .. ' is not a DTC file: ' .. path)
+                elseif decoded.type ~= unitType then
+                    warn('BASE_DTC for ' .. unitType .. ' is a ' .. tostring(decoded.type) .. ' cartridge, ignored')
+                else
+                    cached.data = decoded.data
+                end
+                baseCache[unitType] = cached
+            end
+            bases[unitType] = cached.data
+        end
+    end
+    return bases
 end
 
 local function chat(msg)
@@ -248,7 +285,8 @@ local function generate()
         toLatLon  = t and t.convertMetersToLatLon,
         spawn     = state.spawn,
     }
-    local okBuild, files, errors = pcall(core.build, status, units, state.side, env, aircraft, settings.OPTIONS)
+    local okBuild, files, errors = pcall(core.build, status, units, state.side, env, aircraft, settings.OPTIONS,
+        loadBases())
     if not okBuild then
         warn('build failed: ' .. tostring(files))
         return
@@ -272,6 +310,12 @@ local function generate()
             for k, v in pairs(f.stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
             table.sort(parts)
             local label = f.type .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
+            if f.base then
+                label = label .. ' +base'
+                if #f.dropped > 0 then
+                    warn(f.type .. ': base DTC is for another map, not used: ' .. table.concat(f.dropped, ', '))
+                end
+            end
             summary[#summary + 1] = label .. ' (' .. table.concat(parts, ' ') .. ')'
         else
             warn('cannot write ' .. path .. ': ' .. tostring(err))
