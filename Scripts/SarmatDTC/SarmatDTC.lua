@@ -18,25 +18,34 @@ local CONFIG = {
     FETCH_TIMEOUT = 150,
     SHOW_CHAT     = true,          -- local-only chat notification after writing cartridges
     LOG_SLOT      = true,          -- write own slot details (group, start airbase/FARP, position) to dcs.log
-    -- Per-aircraft overrides of module `options` (aircraft/<type>.lua); `enabled = false` skips a module.
-    -- Examples: ['AH-64D_BLK_II'] = { CTRLM_FARPS = 15 },  ['F-14BU'] = { enabled = false },
-    AIRCRAFT      = {
-    },
 }
+-- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua
 
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
-local DTC_DIR   = lfs.writedir() .. 'DTC\\'
 
 local core = dofile(BASE_DIR .. 'SarmatDTC_core.lua')
+core.FILE_PREFIX = CONFIG.FILE_PREFIX
 local JSON = dofile('Scripts/JSON.lua')
 local Terrain = nil
 
 local function info(msg)  log.write(LOG_TAG, log.INFO, msg) end
 local function warn(msg)  log.write(LOG_TAG, log.WARNING, msg) end
 
-local function loadAircraft()
+local settings = { OPTIONS = {} }   -- config.lua
+local aircraft = {}                 -- selected aircraft modules
+
+-- Reads config.lua and aircraft/*.lua. Called on load and on every mission start,
+-- so edits apply without restarting DCS.
+local function loadSettings()
+    local okC, cfg = pcall(dofile, BASE_DIR .. 'config.lua')
+    if not okC or type(cfg) ~= 'table' then
+        warn('cannot load config.lua (' .. tostring(cfg) .. '), using all aircraft modules')
+        cfg = {}
+    end
+    settings = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = cfg.OPTIONS or {} }
+
     local dir = BASE_DIR .. 'aircraft\\'
     local files = {}
     local ok, err = pcall(function()
@@ -45,12 +54,15 @@ local function loadAircraft()
     if not ok then warn('cannot list ' .. dir .. ': ' .. tostring(err)) end
     local modules, errors = core.loadAircraft(dir, files)
     for _, e in ipairs(errors) do warn('aircraft module skipped: ' .. e) end
+
+    local missing
+    aircraft, missing = core.selectModules(modules, settings.AIRCRAFT)
+    for _, t in ipairs(missing) do warn('config.lua lists ' .. t .. ', but there is no aircraft module for it') end
     local types = {}
-    for i, m in ipairs(modules) do types[i] = m.type end
+    for i, m in ipairs(aircraft) do types[i] = m.type end
     info('aircraft modules: ' .. table.concat(types, ', '))
-    return modules
 end
-local aircraft = loadAircraft()
+loadSettings()
 
 local state = {}
 
@@ -82,6 +94,33 @@ local function readFile(path)
     f:close()
     return s
 end
+
+-- Output dir: absolute ("C:\...", "\\server\..."), with %ENV% variables, or relative to Saved Games.
+local function resolveDir(dir)
+    dir = string.gsub(dir or 'DTC', '%%(%w+)%%', function(k) return os.getenv(k) or ('%' .. k .. '%') end)
+    dir = string.gsub(dir, '/', '\\')
+    if not (string.match(dir, '^%a:\\') or string.match(dir, '^\\\\')) then dir = lfs.writedir() .. dir end
+    if string.sub(dir, -1) ~= '\\' then dir = dir .. '\\' end
+    return dir
+end
+
+local function mkdirs(dir)
+    local path = string.match(dir, '^\\\\') and '\\\\' or ''
+    for part in string.gmatch(dir, '[^\\]+') do
+        path = path .. part .. '\\'
+        if not string.match(part, ':$') then lfs.mkdir(path) end
+    end
+end
+
+-- Serializers for module outputs (see SarmatDTC_core.lua header).
+local ENCODERS = {
+    ['dcs-dtc'] = function(content, unitType)
+        return JSON:encode_pretty({ data = content, name = '', type = unitType })
+    end,
+    json = function(content) return JSON:encode_pretty(content) end,
+    lua  = function(content) return 'return ' .. core.toLua(content) .. '\n' end,
+    text = function(content) return tostring(content) end,
+}
 
 local function writeFileAtomic(path, content)
     local tmp = path .. '.tmp'
@@ -208,24 +247,31 @@ local function generate()
         getHeight = t and t.GetHeight,
         toLatLon  = t and t.convertMetersToLatLon,
     }
-    local okBuild, cartridges, errors = pcall(core.build, status, units, state.side, env, aircraft, CONFIG.AIRCRAFT)
+    local okBuild, files, errors = pcall(core.build, status, units, state.side, env, aircraft, settings.OPTIONS)
     if not okBuild then
-        warn('build failed: ' .. tostring(cartridges))
+        warn('build failed: ' .. tostring(files))
         return
     end
     for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
 
-    lfs.mkdir(DTC_DIR)
     local summary = {}
-    for _, c in ipairs(cartridges) do
-        local text = JSON:encode_pretty({ data = c.data, name = '', type = c.type })
-        local path = DTC_DIR .. CONFIG.FILE_PREFIX .. c.type .. '.dtc'
-        local okW, err = writeFileAtomic(path, text)
+    for _, f in ipairs(files) do
+        local encode = ENCODERS[f.format]
+        local okE, text = false, 'unknown format ' .. tostring(f.format)
+        if encode then okE, text = pcall(encode, f.content, f.type) end
+        local dir = resolveDir(f.dir)
+        local path = dir .. f.file
+        local okW, err = false, text
+        if okE and type(text) == 'string' then
+            mkdirs(dir)
+            okW, err = writeFileAtomic(path, text)
+        end
         if okW then
             local parts = {}
-            for k, v in pairs(c.stats) do parts[#parts + 1] = k .. '=' .. v end
+            for k, v in pairs(f.stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
             table.sort(parts)
-            summary[#summary + 1] = c.type .. ' (' .. table.concat(parts, ' ') .. ')'
+            local label = f.type .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
+            summary[#summary + 1] = label .. ' (' .. table.concat(parts, ' ') .. ')'
         else
             warn('cannot write ' .. path .. ': ' .. tostring(err))
         end
@@ -300,6 +346,7 @@ function callbacks.onMissionLoadEnd()
         return
     end
     state.active = true
+    loadSettings()
     state.theatre = terrainId()
     info('SARMAT server detected: "' .. name .. '", mission "' .. mission .. '", terrain ' .. tostring(state.theatre))
     state.side = mySide()

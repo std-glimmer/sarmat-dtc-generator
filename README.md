@@ -19,15 +19,30 @@
 Скопируйте папку `Scripts` из репозитория в `%USERPROFILE%\Saved Games\DCS.openbeta\`.
 Нужны Windows 10/11: используется встроенный `curl.exe`.
 
-Настройки — блок `CONFIG` в начале `Scripts/SarmatDTC/SarmatDTC.lua`. Параметры отдельных модулей
-задаются в `CONFIG.AIRCRAFT`, например `['AH-64D_BLK_II'] = { CTRLM_FARPS = 15 }` или
-`['F-14BU'] = { enabled = false }`.
+## Настройки — `Scripts/SarmatDTC/config.lua`
 
-## Новые модули
+```lua
+AIRCRAFT = {             -- для каких самолётов генерировать; ненужное закомментируйте
+    "AH-64D_BLK_II",
+    "F-16C_50",
+    -- "F-14BU",
+},
+OPTIONS = {              -- опции отдельных модулей и их выходов
+    ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15 },
+},
+```
+
+Файл перечитывается при каждом старте миссии, перезапускать DCS не нужно.
+
+## Новые модули и другие DTC-системы
 
 Логика каждого модуля — отдельный файл в `Scripts/SarmatDTC/aircraft/`. Чтобы добавить модуль,
-скопируйте `aircraft/_template.lua` в `aircraft/<тип DTC>.lua` и заполните его: файл подхватится
-автоматически.
+скопируйте `aircraft/_template.lua` в `aircraft/<тип DTC>.lua`, заполните его и добавьте тип в `config.lua`.
+
+Помимо нативного DTC DCS, модуль может выдавать файлы для других DTC-систем (`outputs`): форматы
+`json`, `lua`, `text`, своя папка (в том числе вне `Saved Games`) и имя файла с подстановками
+`{type}`, `{side}`, `{terrain}`. Включить, отключить или перенаправить выход можно в
+`config.lua`: `OPTIONS[тип].outputs[id] = { enabled = true, dir = "..." }`.
 
 ## Тесты
 

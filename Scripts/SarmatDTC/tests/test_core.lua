@@ -61,9 +61,87 @@ do
     check(#out == 0, "enabled = false ignored")
 end
 
+-- config.lua AIRCRAFT selection
+do
+    local sel, missing = core.selectModules(modules, { "F-16C_50", "NOPE", "AH-64D_BLK_II", "F-16C_50" })
+    check(#sel == 2 and sel[1].type == "F-16C_50" and sel[2].type == "AH-64D_BLK_II", "selectModules order/filter")
+    check(#missing == 1 and missing[1] == "NOPE", "selectModules missing")
+    sel = core.selectModules(modules, nil)
+    check(#sel == #modules, "selectModules without list must keep all")
+    local cfg = dofile(scriptDir .. "\\config.lua")
+    sel, missing = core.selectModules(modules, cfg.AIRCRAFT)
+    check(#sel == #modules and #missing == 0, "shipped config.lua must list every module")
+end
+
+-- extra outputs (other DTC systems)
+do
+    local calls = {}
+    local multi = {
+        type = "MULTI",
+        options = { N = 3 },
+        build = function(s, lib, opt)
+            local d = lib.cartridge("MULTI", s.env)
+            d.FRONT = lib.simplify(s.front, opt.N)
+            return d, { points = #d.FRONT }
+        end,
+        outputs = {
+            { id = "txt", format = "text", dir = "Exports\\{side}", file = "{type}_{terrain}.txt",
+              build = function(s, lib, opt, built)
+                  calls[#calls + 1] = "txt"
+                  return "points=" .. #built["dcs-dtc"].FRONT, { lines = 1 }
+              end },
+            { id = "luafile", format = "lua", file = "{type}.lua", enabled = false,
+              build = function(s, lib, opt, built)
+                  calls[#calls + 1] = "lua"
+                  return { n = opt.N, txt = built.txt }
+              end },
+            { id = "bad", format = "json", file = "x.json", build = function() error("bad output") end },
+        },
+    }
+    local out, errors = core.build(status, units, "red", env, { multi },
+        { MULTI = { N = 4, outputs = { luafile = { enabled = true, dir = "C:\\Abs\\{side}" } } } })
+    local byId = {}
+    for _, o in ipairs(out) do byId[o.id] = o end
+    check(#out == 3, "MULTI: expected 3 outputs, got " .. #out)
+    check(out[1].id == core.NATIVE_OUTPUT and out[1].format == "dcs-dtc", "native output must be first")
+    check(out[1].file == core.FILE_PREFIX .. "MULTI.dtc" and out[1].dir == "DTC", "native output path")
+    check(out[1].content.type == "MULTI" and #out[1].content.FRONT == 4, "native content / option override")
+    check(byId.txt and byId.txt.content == "points=4", "text output reuses native cartridge")
+    check(byId.txt and byId.txt.dir == "Exports\\red" and byId.txt.file == "MULTI_Syria.txt", "placeholders")
+    check(byId.luafile and byId.luafile.content.txt == "points=4" and byId.luafile.dir == "C:\\Abs\\red",
+        "output override: enabled/dir")
+    check(table.concat(calls, ",") == "txt,lua", "outputs must run in declared order")
+    check(#errors == 1 and string.find(errors[1], "MULTI/bad"), "failing output must be reported only")
+    out = core.build(status, units, "red", env, { multi }, { MULTI = { outputs = { ["dcs-dtc"] = { enabled = false } } } })
+    check(#out == 1 and out[1].id == "txt" and out[1].content == "points=3",
+        "disabled native output must still feed the other outputs")
+end
+
+-- module validation: unique output ids, required fields
+do
+    local tmp = os.getenv("TEMP") .. "\\"
+    local name = "sdtc_badmod_" .. os.time() .. ".lua"
+    local f = assert(io.open(tmp .. name, "wb"))
+    f:write('return { type = "X", build = function() return {} end, outputs = { { id = "dcs-dtc", file = "a", build = function() end } } }')
+    f:close()
+    local ok, errs = core.loadAircraft(tmp, { name })
+    os.remove(tmp .. name)
+    check(#ok == 0 and #errs == 1, "duplicate native output id must be rejected")
+end
+
+-- Lua serializer round trip
+do
+    local value = { 1, "two", { x = 1.5, ["bad key"] = true }, name = "q\"uote\n", nested = { list = { 3, 4 } } }
+    local back = assert(loadstring("return " .. core.toLua(value)))()
+    check(back[1] == 1 and back[2] == "two" and back[3].x == 1.5 and back[3]["bad key"] == true
+        and back.name == value.name and back.nested.list[2] == 4, "toLua round trip")
+end
+
 local function byType(list)
     local t = {}
-    for _, c in ipairs(list) do t[c.type] = c.data end
+    for _, c in ipairs(list) do
+        if c.id == core.NATIVE_OUTPUT then t[c.type] = c.content end
+    end
     return t
 end
 
@@ -93,14 +171,26 @@ for _, side in ipairs({ "blue", "red" }) do
         check(#errors == 0, tag .. ": build errors: " .. table.concat(errors, "; "))
         check(#list == #modules, tag .. ": not every module produced a cartridge")
 
-        -- generic checks for every module, including future ones
-        for _, cart in ipairs(list) do
-            check(cart.data.type == cart.type, tag .. ": " .. cart.type .. " data.type mismatch")
-            check(cart.data.terrain == "Syria", tag .. ": " .. cart.type .. " terrain")
-            check(cart.data.name == core.CARTRIDGE_NAME, tag .. ": " .. cart.type .. " name")
-            check(pcall(JSON.encode, JSON, cart.data), tag .. ": " .. cart.type .. " not JSON-encodable")
-            for k, v in pairs(cart.stats) do
-                check(type(v) == "number", tag .. ": " .. cart.type .. " stat " .. k .. " is not a number")
+        -- generic checks for every module and output, including future ones
+        local files = {}
+        for _, o in ipairs(list) do
+            local label = tag .. ": " .. o.type .. "/" .. o.id
+            local path = string.lower(o.dir .. "\\" .. o.file)
+            check(not files[path], label .. " writes the same file as another output")
+            files[path] = true
+            check(string.find(o.file, "{") == nil and string.find(o.dir, "{") == nil, label .. " unexpanded placeholder")
+            if o.format == "dcs-dtc" then
+                check(o.content.type == o.type, label .. " data.type mismatch")
+                check(o.content.terrain == "Syria", label .. " terrain")
+                check(o.content.name == core.CARTRIDGE_NAME, label .. " name")
+            end
+            if o.format == "text" then
+                check(type(o.content) == "string", label .. " text content must be a string")
+            else
+                check(pcall(JSON.encode, JSON, o.content), label .. " not serializable")
+            end
+            for k, v in pairs(o.stats) do
+                check(type(v) == "number", label .. " stat " .. k .. " is not a number")
             end
         end
 
@@ -144,10 +234,12 @@ for _, side in ipairs({ "blue", "red" }) do
 
         results[tag] = { own = countPrefix(ctrlm, "OWN"), enemy = countPrefix(ctrlm, "ENEMY"), tgt = #tgt, farps = farps }
         if outDir and not quota then
-            for _, cart in ipairs(list) do
-                local f = assert(io.open(outDir .. "\\SARMAT_" .. cart.type .. "_" .. side .. ".dtc", "wb"))
-                f:write(JSON:encode_pretty({ data = cart.data, name = "", type = cart.type }))
-                f:close()
+            for _, o in ipairs(list) do
+                if o.id == core.NATIVE_OUTPUT then
+                    local f = assert(io.open(outDir .. "\\SARMAT_" .. o.type .. "_" .. side .. ".dtc", "wb"))
+                    f:write(JSON:encode_pretty({ data = o.content, name = "", type = o.type }))
+                    f:close()
+                end
             end
         end
     end

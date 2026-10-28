@@ -14,7 +14,8 @@
 | Путь | Назначение |
 |---|---|
 | `Scripts/Hooks/SarmatDTC-hook.lua` | Загрузчик: DCS исполняет все файлы из `Scripts/Hooks` в GUI-окружении |
-| `Scripts/SarmatDTC/SarmatDTC.lua` | Связь с DCS: колбэки, определение сервера и стороны, загрузка, поиск модулей, запись файлов. `CONFIG` в начале файла |
+| `Scripts/SarmatDTC/config.lua` | **Пользовательские настройки**: `AIRCRAFT` — для каких самолётов генерировать (ненужные закомментировать), `OPTIONS[type]` — опции модулей и их выходов. Перечитывается при каждом старте миссии |
+| `Scripts/SarmatDTC/SarmatDTC.lua` | Связь с DCS: колбэки, определение сервера и стороны, загрузка, поиск модулей, кодировщики форматов и запись файлов. Технический `CONFIG` в начале файла |
 | `Scripts/SarmatDTC/SarmatDTC_core.lua` | Общая библиотека без зависимостей от DCS: данные карты → нейтральная «обстановка» (`situation`), классификация юнитов и ПВО, геометрия, загрузка и запуск модулей |
 | `Scripts/SarmatDTC/aircraft/<type>.lua` | **Один файл на модуль DCS**: переводит обстановку в DTC этого модуля, держит его символы и лимиты. Подхватывается автоматически |
 | `Scripts/SarmatDTC/aircraft/_template.lua` | Шаблон модуля с описанием API (файлы на `_` не загружаются) |
@@ -23,24 +24,41 @@
 | `Scripts/SarmatDTC/tests/` | Офлайн-тесты и фикстуры (снимок данных карты, Сирия) |
 | `Scripts/SarmatDTC/cache/` | Кэш загрузки, генерируется во время работы, в git не попадает |
 
-Результат: `DTC/SARMAT_<type>.dtc`, по одному файлу на каждый модуль из `aircraft/`
-(сейчас `AH-64D_BLK_II`, `F-14BU`, `F-16C_50`, `FA-18C_hornet`). Каждый файл существует в одном
-экземпляре и перезаписывается при каждом выборе слота.
+Результат: `DTC/SARMAT_<type>.dtc` для каждого самолёта из `config.lua` (`AIRCRAFT`), у которого
+есть модуль в `aircraft/` (сейчас `AH-64D_BLK_II`, `F-14BU`, `F-16C_50`, `FA-18C_hornet`), плюс файлы
+дополнительных выходов модулей (`outputs`). Каждый файл существует в одном экземпляре
+и перезаписывается при каждом выборе слота.
 
 ## Архитектура модулей
 
 ```
-status.json + units.json ──core.situation()──► situation ──► aircraft/*.lua build() ──► DTC data
+status.json + units.json ──core.situation()──► situation ──► aircraft/<type>.lua ──► outputs ──► ENCODERS ──► файлы
+                                                              build   → "dcs-dtc" (DTC\SARMAT_<type>.dtc)
+                                                              outputs → любые другие форматы/папки
 ```
 
 - `situation` не знает про конкретные самолёты: `side`, `front`, `groups` (`friendly, type, count,
   class, ad, adLead`), `sites` (ЗРК-площадки без живой группы), `farps`, `env`. Полное описание —
   в `aircraft/_template.lua` и в комментарии к `M.situation`.
-- Модуль возвращает `{ type, options, build(situation, lib, options) → data, stats }`. `lib` — это
-  `SarmatDTC_core` (`simplify`, `chain`, `byFront`, `elevation`, `latLon`, `cartridge`, `asciiUpper`, `round`).
-- `core.build` подставляет в `data.type` тип модуля, мёржит `options` модуля с `CONFIG.AIRCRAFT[type]`
-  (`enabled = false` отключает модуль) и вызывает каждый модуль через `pcall`: сбой одного
-  не мешает остальным (ошибка пишется в лог `cartridge failed: ...`).
+- Модуль возвращает `{ type, options, build?, outputs? }`. `build(situation, lib, options) → data, stats`
+  — нативный картридж DCS (выход с id `dcs-dtc`, всегда первый). `outputs` — список дополнительных
+  файлов для **других DTC-систем**: `{ id, format, dir, file, enabled, build(situation, lib, options, built) → content, stats }`.
+  `built[id]` — уже построенные выходы этого модуля (например, `built["dcs-dtc"]`, чтобы переиспользовать
+  отобранные точки). Нативный картридж строится всегда, даже если его запись отключена.
+  `lib` — это `SarmatDTC_core` (`simplify`, `chain`, `byFront`, `elevation`, `latLon`, `cartridge`,
+  `asciiUpper`, `round`, `toLua`).
+- Форматы (кодировщики `ENCODERS` в `SarmatDTC.lua`): `dcs-dtc` (обёртка `{data, name, type}` + JSON
+  в стиле DCS), `json`, `lua` (`return {...}`), `text` (строка как есть). Новый формат — новая функция
+  в `ENCODERS`.
+- `dir`: путь относительно `Saved Games\DCS.openbeta`, абсолютный (`C:\...`, `\\server\...`) или
+  с `%ENV%`; в `dir`/`file` работают `{type}`, `{side}`, `{terrain}`. Папки создаются автоматически.
+- `core.build` мёржит `options` модуля с `config.lua OPTIONS[type]` (`enabled = false` отключает модуль,
+  `outputs[id] = { enabled, dir, file }` — переопределяет выход) и вызывает каждый модуль и выход
+  через `pcall`: сбой одного не мешает остальным (в лог `cartridge failed: <type>/<id>: ...`).
+- Загрузчик отклоняет модуль без `build` и без `outputs`, выходы без `id`/`file`/`build`
+  и повторяющиеся `id` (`dcs-dtc` зарезервирован).
+- `config.lua AIRCRAFT` задаёт и набор, и порядок генерации (`core.selectModules`); тип без модуля
+  даёт предупреждение в лог. Если `config.lua` не читается, генерируются все модули.
 - Классификация (`AD_TYPES`, `GROUND_CLASSES`) общая, она живёт в ядре и выдаёт **ключи**
   (`"SA-11"`, `"armor"`). Символы конкретного модуля (ID Apache и т.п.) — только в его файле.
 
@@ -85,7 +103,7 @@ status.json + units.json ──core.situation()──► situation ──► air
 - CTRLM: свои и вражеские наземные группы (символ по большинству типов: armor/mech/arty/inf/generic),
   свои ПВО (`AD`, id 12), FARP и FOB (id 68; текст `F01…` — свои, `E01…` — вражеские).
   Опция `CTRLM_FARPS = nil` — общий список (решение владельца: оставить так, без квоты);
-  `CONFIG.AIRCRAFT['AH-64D_BLK_II'] = { CTRLM_FARPS = N }` резервирует до N слотов под FARP-ы.
+  `config.lua OPTIONS['AH-64D_BLK_II'] = { CTRLM_FARPS = N }` резервирует до N слотов под FARP-ы.
 - TGT: только вражеские ПВО. Группа, где есть хоть один ПВО-юнит, считается ПВО; тип — самый
   опасный по порядку `AD_TYPES`. Плюс ЗРК-площадки из `strong`, не покрытые живой группой своей
   стороны в радиусе 2 км. Ключ ПВО → символ через `TGT_IDS` в модуле.
@@ -125,7 +143,9 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
   проверки лимитов и сцепки линий для известных модулей (обе стороны, с квотой FARP и без).
 - `test_hook.lua`: `SarmatDTC.lua` с заглушками `DCS`/`net`/`log`/`lfs`/`terrain` и **реальной** загрузкой
   через `wscript → fetch.cmd → curl` по `file://`. Временная папка лежит в коротком `%TEMP%\sdtc*`
-  из-за лимита в 256 символов.
+  из-за лимита в 256 символов. Тест подкладывает свой `config.lua` (F-14 закомментирован, есть
+  неизвестный тип) и модуль `ZZ_TEST` только с `outputs` (text/lua/json; относительный, абсолютный
+  и `%TEMP%` пути) и проверяет реально записанные файлы.
 - Интерпретатор — `bin\luae.exe` из установки DCS (Lua 5.1), запускать с рабочей папкой в корне DCS.
 - В DCS реально не запускается: после изменений в колбэках просить пользователя проверить в игре
   (`Logs\dcs.log`, тег `SARMAT.DTC`).
@@ -137,11 +157,21 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
 3. Найти лимиты (`MAX_*`) и структуру точек/линий в файле нужной секции.
 4. Образцы реальных файлов — в `DTC/` пользователя (сохранены редактором DCS).
 5. Скопировать `aircraft/_template.lua` в `aircraft/<type>.lua`, заполнить `type`, `options` (лимиты)
-   и `build`. Ни ядро, ни `SarmatDTC.lua` трогать не нужно: модуль подхватится сам.
+   и `build`, затем добавить тип в `AIRCRAFT` в `config.lua` (тест проверяет, что поставляемый
+   `config.lua` перечисляет все модули). Ни ядро, ни `SarmatDTC.lua` трогать не нужно.
 6. Если в `situation` не хватает данных (например, аэродромов), добавить их в `M.situation`
    нейтрально (ключи, а не символы модуля) и описать в `_template.lua`.
 7. Добавить специфичные проверки в `test_core.lua` (общие проверки уже покрывают новый модуль)
    и запустить тесты.
+
+### 2a. Добавить выгрузку для другой DTC-системы (не нативный DCS)
+1. Выяснить формат и место хранения файлов этой системы (по документации или по реальному файлу
+   пользователя). Не выдумывать схему: если образца нет — спросить владельца.
+2. В модуль нужного самолёта добавить элемент в `outputs` (`id`, `format`, `dir`, `file`, `build`).
+   Для новой внешней системы — по умолчанию `enabled = false`, пусть пользователь включит её в `config.lua`.
+3. Данные брать из `situation` или переиспользовать `built["dcs-dtc"]`.
+4. Если нужен формат, которого нет в `ENCODERS` (XML, INI…), добавить кодировщик в `SarmatDTC.lua`.
+5. Покрыть тестом в `test_core.lua` (форма `content`, пути) и прогнать тесты.
 
 ### 3. Обновить классификацию юнитов/ПВО
 - `AD_TYPES` (порядок = приоритет угрозы, первый совпавший побеждает) и `GROUND_CLASSES` в ядре.

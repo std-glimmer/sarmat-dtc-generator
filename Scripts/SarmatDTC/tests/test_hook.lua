@@ -87,7 +87,7 @@ end
 
 local cacheFlag = writedir .. 'Scripts\\SarmatDTC\\cache\\done.flag'
 local dtcDir = writedir .. 'DTC\\'
-local types = { 'AH-64D_BLK_II', 'F-16C_50', 'FA-18C_hornet', 'F-14BU' }
+local types = { 'AH-64D_BLK_II', 'F-16C_50', 'FA-18C_hornet' }   -- F-14BU is commented out in config.lua
 
 local function frames(seconds)
     for _ = 1, seconds do
@@ -117,9 +117,44 @@ local function readAH64()
     return s
 end
 
+-- config.lua with F-14 commented out, an unknown type and a test module that has only extra outputs
+local function writeFile(path, text)
+    local f = assert(io.open(path, 'wb'))
+    f:write(text)
+    f:close()
+end
+local envDir = os.getenv('TEMP') .. '\\sdtc_env_' .. os.time()
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.lua', [[
+return {
+    AIRCRAFT = {
+        "AH-64D_BLK_II",
+        "F-16C_50",
+        "FA-18C_hornet",
+        -- "F-14BU",
+        "ZZ_TEST",
+        "NOPE",
+    },
+    OPTIONS = { ZZ_TEST = { outputs = { env = { dir = "%TEMP%\\]] .. string.match(envDir, '[^\\]+$') .. [[" } } } },
+}
+]])
+writeFile(writedir .. 'Scripts\\SarmatDTC\\aircraft\\ZZ_TEST.lua', [[
+return {
+    type = "ZZ_TEST",
+    outputs = {
+        { id = "txt", format = "text", dir = "Exports\\{side}", file = "{type}.txt",
+          build = function(s) return "front=" .. #s.front .. " side=" .. s.side, { n = 1 } end },
+        { id = "luafile", format = "lua", dir = ]] .. string.format('%q', writedir .. 'Abs') .. [[, file = "{type}.lua",
+          build = function(s, lib, opt, built) return { side = s.side, txt = built.txt } end },
+        { id = "env", format = "json", dir = "unused", file = "z.json",
+          build = function(s) return { farps = #s.farps } end },
+    },
+}
+]])
+
 dofile(writedir .. 'Scripts\\SarmatDTC\\SarmatDTC.lua')
 local cb = DCS.cb
-check(logged('aircraft modules: AH%-64D_BLK_II, F%-14BU, F%-16C_50, FA%-18C_hornet'), 'aircraft modules not discovered')
+check(logged('aircraft modules: AH%-64D_BLK_II, F%-16C_50, FA%-18C_hornet, ZZ_TEST'), 'config.lua selection not applied')
+check(logged('config.lua lists NOPE'), 'unknown type in config.lua not reported')
 
 print('-- non-SARMAT server is ignored')
 server = 'Some Other Server'
@@ -144,9 +179,28 @@ print('-- own slot blue (airfield)')
 mySlot = '101'
 cb.onPlayerChangeSlot(7)
 for _, t in ipairs(types) do check(exists(dtcDir .. 'SARMAT_' .. t .. '.dtc'), 'missing cartridge ' .. t) end
+check(not exists(dtcDir .. 'SARMAT_F-14BU.dtc'), 'F-14BU written although commented out in config.lua')
+check(not exists(dtcDir .. 'SARMAT_ZZ_TEST.dtc'), 'native cartridge written for a module without build')
 check(#chats == 1, 'expected one chat message, got ' .. #chats)
 check(logged('base=Hatay'), 'airfield slot not resolved')
 local blue = readAH64()
+
+print('-- extra outputs: text (relative + {side}), lua (absolute), json (%TEMP%)')
+local txtPath = writedir .. 'Exports\\blue\\ZZ_TEST.txt'
+local tf = io.open(txtPath, 'rb')
+check(tf and string.find(tf:read('*a'), '^front=%d+ side=blue$'), 'text output missing or wrong')
+if tf then tf:close() end
+local okLua, luaOut = pcall(dofile, writedir .. 'Abs\\ZZ_TEST.lua')
+check(okLua and type(luaOut) == 'table' and luaOut.side == 'blue' and string.find(luaOut.txt or '', 'side=blue'),
+    'lua output missing or not loadable')
+local JSON = dofile('Scripts/JSON.lua')
+local jf = io.open(envDir .. '\\z.json', 'rb')
+local okJ, jsonOut = pcall(function() return JSON:decode(jf:read('*a')) end)
+check(jf and okJ and type(jsonOut) == 'table' and type(jsonOut.farps) == 'number', 'json output in %TEMP% missing or invalid')
+if jf then jf:close() end
+os.remove(envDir .. '\\z.json')
+os.execute('rd "' .. envDir .. '" 2>nul')
+check(logged('ZZ_TEST/txt %(n=1%)'), 'extra output not in the summary')
 
 print('-- own slot red (FARP, multicrew seat id)')
 mySideNum, mySlot = 1, '202'

@@ -1,5 +1,5 @@
 -- Template for a new aircraft module. Copy to aircraft/<DTC type>.lua (files starting with "_"
--- are not loaded). The file name is free, but keep it equal to `type` for clarity.
+-- are not loaded) and add the type to AIRCRAFT in config.lua.
 --
 -- Before writing: read the module's DTC editor in the DCS install
 -- (CoreMods/aircraft/<module>/DTC/<type>_DTC.lua): the `data.type` value, which keys setData
@@ -15,13 +15,21 @@
 --   s.farps                     { {x, z, friendly, name, kind}, ... } FARPs / FOBs
 --   s.env                       terrain id and terrain callbacks
 -- lib: round, simplify(line, n), chain(line, lines, ptsPerLine), byFront(list, front, limit),
---      distToPolyline, elevation(env, x, z), latLon(env, x, z), cartridge(type, env), asciiUpper(s, len)
--- DTC stores DCS x as `x` and DCS z as `y`.
+--      distToPolyline, elevation(env, x, z), latLon(env, x, z), cartridge(type, env), asciiUpper(s, len),
+--      toLua(value)
+-- DCS DTC stores DCS x as `x` and DCS z as `y`.
+--
+-- Outputs: `build` = native DCS cartridge DTC/SARMAT_<type>.dtc (output id "dcs-dtc").
+-- `outputs` = extra files for other DTC systems; each runs after `build` and gets
+-- built["dcs-dtc"] (the native cartridge data) to reuse. Formats: "json", "lua", "text", "dcs-dtc".
+-- dir: relative to Saved Games\DCS.openbeta, absolute, or with %ENV% variables;
+-- dir/file placeholders: {type} {side} {terrain}. Users override `enabled`/`dir`/`file`
+-- in config.lua OPTIONS[type].outputs[id]. A module may have only `outputs` and no `build`.
 
 return {
     type = "MyAircraft_DTC_type",
     options = {
-        POINTS = 10,            -- overridable from CONFIG.AIRCRAFT["MyAircraft_DTC_type"]
+        POINTS = 10,            -- overridable from config.lua OPTIONS["MyAircraft_DTC_type"]
     },
 
     build = function(s, lib, opt)
@@ -33,4 +41,22 @@ return {
         data.SOME_SECTION = { LINE = points }
         return data, { points = #points }
     end,
+
+    outputs = {
+        {
+            id      = "my-tool",
+            format  = "json",
+            dir     = "%USERPROFILE%\\Documents\\MyDTCTool\\{type}",
+            file    = "SARMAT.json",
+            enabled = false,    -- opt-in: config.lua OPTIONS[type].outputs["my-tool"] = { enabled = true }
+            build   = function(s, lib, opt, built)
+                local front = {}
+                for i, p in ipairs(built["dcs-dtc"].SOME_SECTION.LINE) do
+                    local lat, lon = lib.latLon(s.env, p.x, p.y)
+                    front[i] = { lat = lat, lon = lon }
+                end
+                return { name = "SARMAT front", side = s.side, front = front }, { points = #front }
+            end,
+        },
+    },
 }

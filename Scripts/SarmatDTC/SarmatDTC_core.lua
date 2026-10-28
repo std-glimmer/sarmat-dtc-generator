@@ -11,15 +11,31 @@
 --
 -- Aircraft module (aircraft/<type>.lua) returns:
 -- {
---     type    = "F-16C_50",               -- DTC unit type, also the output file name SARMAT_<type>.dtc
---     options = { POINTS = 25, ... },     -- defaults, overridable per type from CONFIG.AIRCRAFT
---     build   = function(situation, lib, options) return data, stats end,
+--     type    = "F-16C_50",               -- DCS unit type (module id)
+--     options = { POINTS = 25, ... },     -- defaults, overridable per type from config.lua OPTIONS
+--     build   = function(situation, lib, options) return data, stats end,  -- native DCS DTC, optional
+--     outputs = { <output>, ... },        -- optional files in other formats (other DTC systems)
 -- }
--- `data` is the cartridge "data" table, `stats` a flat {name = number} table for the log.
+-- <output> = {
+--     id      = "my-tool",                -- unique within the module
+--     format  = "json" | "text" | "lua" | "dcs-dtc",  -- serializer, see SarmatDTC.lua ENCODERS
+--     dir     = "DTC" | "C:\\Tools\\X" | "%USERPROFILE%\\X", -- relative to Saved Games or absolute
+--     file    = "SARMAT_{type}.json",     -- placeholders: {type} {side} {terrain}
+--     enabled = true,                     -- default true; config.lua OPTIONS[type].outputs[id] overrides
+--     build   = function(situation, lib, options, built) return content, stats end,
+-- }
+-- `build` is a shorthand for the output { id = "dcs-dtc", format = "dcs-dtc", dir = "DTC",
+-- file = FILE_PREFIX .. "{type}.dtc" } that always runs first. `content` is a table for
+-- json/lua/dcs-dtc (for dcs-dtc: the cartridge "data" table) or a string for text.
+-- `built[id]` holds the content of outputs already built for this module, so other formats can
+-- reuse the native cartridge (built even when its output is disabled, then only not written).
+-- `stats` is a flat {name = number} table for the log.
 
 local M = {}
 
 M.CARTRIDGE_NAME = "SARMAT"
+M.FILE_PREFIX = "SARMAT_"
+M.NATIVE_OUTPUT = "dcs-dtc"
 
 local FARP_TWIN_M  = 600    -- the map merges FARPs closer than this into one site
 local AD_DEDUP_M   = 2000   -- SAM site from status.json vs. live AD group from units.json
@@ -149,6 +165,31 @@ function M.asciiUpper(s, maxLen)
     s = string.gsub(s, "%s+", " ")
     if maxLen and #s > maxLen then s = string.sub(s, 1, maxLen) end
     return s
+end
+
+-- Serializes a value as Lua source ("return { ... }" with format "lua"); keys sorted for stable output.
+function M.toLua(value, indent)
+    indent = indent or ""
+    local t = type(value)
+    if t == "string" then return string.format("%q", value) end
+    if t == "number" or t == "boolean" or t == "nil" then return tostring(value) end
+    if t ~= "table" then error("cannot serialize " .. t) end
+    local inner = indent .. "    "
+    local parts = {}
+    local n = #value
+    for i = 1, n do parts[#parts + 1] = inner .. M.toLua(value[i], inner) end
+    local keys = {}
+    for k in pairs(value) do
+        if not (type(k) == "number" and k >= 1 and k <= n and k == math.floor(k)) then keys[#keys + 1] = k end
+    end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    for _, k in ipairs(keys) do
+        local key = (type(k) == "string" and string.match(k, "^[%a_][%w_]*$")) and k
+            or ("[" .. M.toLua(k) .. "]")
+        parts[#parts + 1] = inner .. key .. " = " .. M.toLua(value[k], inner)
+    end
+    if #parts == 0 then return "{}" end
+    return "{\n" .. table.concat(parts, ",\n") .. ",\n" .. indent .. "}"
 end
 
 ------------------------------------------------------------------------------
@@ -344,31 +385,94 @@ function M.loadAircraft(dir, files)
     table.sort(names)
     for _, f in ipairs(names) do
         local ok, mod = pcall(dofile, dir .. f)
-        if ok and type(mod) == "table" and type(mod.type) == "string" and type(mod.build) == "function" then
+        local valid = ok and type(mod) == "table" and type(mod.type) == "string"
+            and (type(mod.build) == "function" or type(mod.outputs) == "table")
+        if valid then
+            local ids = { [M.NATIVE_OUTPUT] = mod.build ~= nil }
+            for _, o in ipairs(mod.outputs or {}) do
+                if type(o.id) ~= "string" or type(o.build) ~= "function" or type(o.file) ~= "string" or ids[o.id] then
+                    valid = false
+                else
+                    ids[o.id] = true
+                end
+            end
+        end
+        if valid then
             modules[#modules + 1] = mod
         else
-            errors[#errors + 1] = f .. ": " .. (ok and "must return { type = ..., build = function }" or tostring(mod))
+            errors[#errors + 1] = f .. ": " .. (ok and
+                "must return { type = ..., build = function and/or outputs = { {id, file, build}, ... } } with unique output ids"
+                or tostring(mod))
         end
     end
     return modules, errors
 end
 
--- Runs every module over the situation. `overrides[type]` merges into module options;
--- `enabled = false` there skips the module. A failing module does not stop the others.
--- Returns list of { type, data, stats }, list of error strings.
+-- Keeps the modules whose type is in `list` (config.lua AIRCRAFT), in list order; nil list keeps all.
+-- Returns selected modules, list entries without a module.
+function M.selectModules(modules, list)
+    if type(list) ~= "table" then return modules, {} end
+    local byType = {}
+    for _, m in ipairs(modules) do byType[m.type] = m end
+    local selected, missing, seen = {}, {}, {}
+    for _, t in ipairs(list) do
+        if byType[t] and not seen[t] then
+            selected[#selected + 1] = byType[t]
+            seen[t] = true
+        elseif not byType[t] then
+            missing[#missing + 1] = tostring(t)
+        end
+    end
+    return selected, missing
+end
+
+-- Output list of a module with the native DCS DTC output (from `build`) first.
+function M.outputsOf(mod)
+    local list = {}
+    if mod.build then
+        list[1] = { id = M.NATIVE_OUTPUT, format = "dcs-dtc", dir = "DTC", file = M.FILE_PREFIX .. "{type}.dtc",
+            build = function(s, lib, opt) return mod.build(s, lib, opt) end }
+    end
+    for _, o in ipairs(mod.outputs or {}) do list[#list + 1] = o end
+    return list
+end
+
+local function expand(s, vars)
+    return (string.gsub(s, "{(%w+)}", function(k) return vars[k] or ("{" .. k .. "}") end))
+end
+
+-- Runs every module over the situation. `overrides[type]` merges into module options
+-- (`enabled = false` skips the module); `overrides[type].outputs[id]` merges into an output
+-- (`enabled`, `dir`, `file`). A failing module or output does not stop the others.
+-- Returns list of { type, id, format, dir, file, content, stats }, list of error strings.
 function M.build(status, units, mySide, env, modules, overrides)
     local situation = M.situation(status, units, mySide)
     situation.env = env
     local out, errors = {}, {}
     for _, mod in ipairs(modules) do
-        local opt = merge(mod.options, overrides and overrides[mod.type])
+        local ov = overrides and overrides[mod.type] or {}
+        local opt = merge(mod.options, ov)
+        opt.outputs = nil
         if opt.enabled ~= false then
-            local ok, data, stats = pcall(mod.build, situation, M, opt)
-            if ok and type(data) == "table" then
-                data.type = mod.type
-                out[#out + 1] = { type = mod.type, data = data, stats = stats or {} }
-            else
-                errors[#errors + 1] = mod.type .. ": " .. tostring(data)
+            local vars = { type = mod.type, side = situation.side, terrain = tostring(env.terrain or "") }
+            local built = {}
+            for _, o in ipairs(M.outputsOf(mod)) do
+                local o2 = merge(o, ov.outputs and ov.outputs[o.id])
+                -- the native cartridge is always built (other outputs may reuse it), written only if enabled
+                if o2.enabled ~= false or o2.id == M.NATIVE_OUTPUT then
+                    local ok, content, stats = pcall(o2.build, situation, M, opt, built)
+                    if ok and content ~= nil then
+                        if o2.format == "dcs-dtc" and type(content) == "table" then content.type = mod.type end
+                        built[o2.id] = content
+                        if o2.enabled ~= false then
+                            out[#out + 1] = { type = mod.type, id = o2.id, format = o2.format or "json",
+                                dir = expand(o2.dir or "DTC", vars), file = expand(o2.file, vars),
+                                content = content, stats = stats or {} }
+                        end
+                    else
+                        errors[#errors + 1] = mod.type .. "/" .. o2.id .. ": " .. tostring(ok and "no content" or content)
+                    end
+                end
             end
         end
     end
