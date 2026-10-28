@@ -1,6 +1,10 @@
 -- AH-64D: Control Measures (own/enemy ground groups, own AD, FARPs), Targets and Threats
 -- (enemy AD by type) and the front line as FLOT in Mission 1.
 -- Format: CoreMods/aircraft/AH-64D/DTC/NAV/{Points,Lines}.lua; NAV is imported only on matching terrain.
+--
+-- Priority (lowest score wins a slot):
+--   score = distance to front + SPAWN_WEIGHT * distance to own spawn base (if known)
+--   enemy objects: score * ENEMY_FACTOR
 
 -- CTRLM symbol ids by ground class: { friendly, enemy } (Points.lua PointsID.CTRLM)
 local CTRLM_IDS = {
@@ -36,6 +40,8 @@ return {
         TGT         = 50,   -- T01..T50
         LINES       = 15,
         LINE_PTS    = 4,    -- 2..4 vertices per line
+        SPAWN_WEIGHT = 0.5, -- weight of distance to own spawn base vs distance to front (0 = ignore spawn)
+        ENEMY_FACTOR = 0.7, -- enemy score multiplier (< 1 prefers enemy objects, 1 = no preference)
     },
 
     build = function(s, lib, opt)
@@ -47,10 +53,11 @@ return {
             if g.ad and not g.friendly then
                 tgt[#tgt + 1] = { x = g.x, z = g.z, id = TGT_IDS[g.ad] or TGT_GENERIC, note = up(adNote(g), 40) }
             elseif g.ad then
-                ctrlm[#ctrlm + 1] = { x = g.x, z = g.z, id = CTRLM_OWN_AD, note = up("OWN AD " .. adNote(g), 40) }
+                ctrlm[#ctrlm + 1] = { x = g.x, z = g.z, id = CTRLM_OWN_AD, friendly = true,
+                    note = up("OWN AD " .. adNote(g), 40) }
             else
                 local ids = CTRLM_IDS[g.class] or CTRLM_IDS.generic
-                ctrlm[#ctrlm + 1] = { x = g.x, z = g.z, id = g.friendly and ids[1] or ids[2],
+                ctrlm[#ctrlm + 1] = { x = g.x, z = g.z, id = g.friendly and ids[1] or ids[2], friendly = g.friendly,
                     note = up((g.friendly and "OWN " or "ENEMY ") .. CLASS_NAMES[g.class] .. " "
                         .. g.type .. " X" .. g.count, 40) }
             end
@@ -66,18 +73,24 @@ return {
                 note = up(f.name .. (f.friendly and " OWN" or " ENEMY"), 40) }
         end
 
-        -- selection by distance to the front
+        -- priority: near the front, near own spawn base, enemy first
+        local function score(p)
+            local v = lib.distToPolyline(p.x, p.z, s.front)
+            if s.spawn then v = v + opt.SPAWN_WEIGHT * lib.dist(p, s.spawn) end
+            if not p.friendly then v = v * opt.ENEMY_FACTOR end
+            return v
+        end
         local selected
         if opt.CTRLM_FARPS then
             local farps, others = {}, {}
             for _, p in ipairs(ctrlm) do
                 if p.farp then farps[#farps + 1] = p else others[#others + 1] = p end
             end
-            selected = lib.byFront(farps, s.front, math.min(opt.CTRLM_FARPS, opt.CTRLM))
-            for _, p in ipairs(lib.byFront(others, s.front, opt.CTRLM - #selected)) do selected[#selected + 1] = p end
-            selected = lib.byFront(selected, s.front, opt.CTRLM)
+            selected = lib.byScore(farps, score, math.min(opt.CTRLM_FARPS, opt.CTRLM))
+            for _, p in ipairs(lib.byScore(others, score, opt.CTRLM - #selected)) do selected[#selected + 1] = p end
+            selected = lib.byScore(selected, score, opt.CTRLM)
         else
-            selected = lib.byFront(ctrlm, s.front, opt.CTRLM)
+            selected = lib.byScore(ctrlm, score, opt.CTRLM)
         end
 
         local ctrlmPts, tgtPts = {}, {}
@@ -92,7 +105,7 @@ return {
             ctrlmPts[i] = { alt = lib.elevation(env, p.x, p.z), id = p.id, note = p.note, num = num, text = text,
                 x = lib.round(p.x), y = lib.round(p.z) }
         end
-        for i, p in ipairs(lib.byFront(tgt, s.front, opt.TGT)) do
+        for i, p in ipairs(lib.byScore(tgt, score, opt.TGT)) do
             tgtPts[i] = { alt = lib.elevation(env, p.x, p.z), id = p.id, note = p.note, num = i,
                 text = string.format("T%02d", i), x = lib.round(p.x), y = lib.round(p.z) }
         end
@@ -118,6 +131,8 @@ return {
                 Lines = lines,
             },
         }
-        return data, { ctrlm = #ctrlmPts, tgt = #tgtPts, lines = #lines }
+        local enemy = 0
+        for _, p in ipairs(selected) do if not p.friendly then enemy = enemy + 1 end end
+        return data, { ctrlm = #ctrlmPts, enemy = enemy, tgt = #tgtPts, lines = #lines }
     end,
 }

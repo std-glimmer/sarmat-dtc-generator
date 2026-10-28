@@ -137,6 +137,41 @@ do
         and back.name == value.name and back.nested.list[2] == 4, "toLua round trip")
 end
 
+-- AH-64 priority: around the spawn base, enemy first, still near the front
+do
+    local ah = mods["AH-64D_BLK_II"]
+    local function ctrlmOf(spawn, over)
+        local e = {}
+        for k, v in pairs(env) do e[k] = v end
+        e.spawn = spawn
+        local out = core.build(status, units, "red", e, { ah }, { ["AH-64D_BLK_II"] = over or {} })
+        return out[1].content.NAV.Mission_1.Points.CTRLM.POINTS, out[1].content.NAV.Mission_1.Points.TGT.POINTS, out[1].stats
+    end
+    local function meanDist(points, p0)
+        local sum = 0
+        for _, p in ipairs(points) do sum = sum + math.sqrt((p.x - p0.x) ^ 2 + (p.y - p0.z) ^ 2) end
+        return sum / #points
+    end
+    local spawnN = { x = 96000, z = 180000, name = "north" }    -- near the front, east
+    local spawnS = { x = 20000, z = -120000, name = "south" }   -- near the front, west
+    local cN, tN = ctrlmOf(spawnN)
+    local cS, tS = ctrlmOf(spawnS)
+    local c0, t0 = ctrlmOf(nil)
+    check(meanDist(cN, spawnN) < meanDist(c0, spawnN), "spawn north: CTRLM not closer to spawn")
+    check(meanDist(cS, spawnS) < meanDist(c0, spawnS), "spawn south: CTRLM not closer to spawn")
+    check(meanDist(tN, spawnN) < meanDist(t0, spawnN), "spawn north: TGT not closer to spawn")
+    check(meanDist(cN, spawnN) < meanDist(cS, spawnN), "different spawns must give different selections")
+    local _, _, sEnemy = ctrlmOf(spawnN)
+    local _, _, sEven = ctrlmOf(spawnN, { ENEMY_FACTOR = 1 })
+    check(sEnemy.enemy > sEven.enemy, "ENEMY_FACTOR must prefer enemy objects (" .. sEnemy.enemy .. " vs " .. sEven.enemy .. ")")
+    local cW = ctrlmOf(spawnN, { SPAWN_WEIGHT = 0 })
+    local same = #cW == #c0
+    for i = 1, math.min(#cW, #c0) do same = same and cW[i].x == c0[i].x and cW[i].y == c0[i].y end
+    check(same, "SPAWN_WEIGHT = 0 must ignore the spawn")
+    print(string.format("spawn priority: mean dist to north spawn %.0f km (no spawn %.0f km), enemy %d vs %d without preference",
+        meanDist(cN, spawnN) / 1000, meanDist(c0, spawnN) / 1000, sEnemy.enemy, sEven.enemy))
+end
+
 local function byType(list)
     local t = {}
     for _, c in ipairs(list) do

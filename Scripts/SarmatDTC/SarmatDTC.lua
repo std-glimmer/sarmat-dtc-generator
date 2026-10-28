@@ -75,6 +75,7 @@ local function resetState()
         fetchStart = 0,
         fetchedAt  = nil,     -- real time of last successful download
         nextPoll   = 0,
+        spawn      = nil,     -- {x, z, name} of own slot's start base, if known
     }
 end
 resetState()
@@ -211,8 +212,7 @@ local function slotInfo(side)
     return result
 end
 
-local function logSlot(side)
-    local s = slotInfo(side)
+local function logSlot(side, s)
     local parts = {}
     for _, k in ipairs({ 'id', 'type', 'group', 'takeOff', 'airdromeId', 'helipadId', 'base', 'x', 'z' }) do
         if s[k] ~= nil then parts[#parts + 1] = k .. '=' .. tostring(s[k]) end
@@ -246,6 +246,7 @@ local function generate()
         terrain   = state.theatre,
         getHeight = t and t.GetHeight,
         toLatLon  = t and t.convertMetersToLatLon,
+        spawn     = state.spawn,
     }
     local okBuild, files, errors = pcall(core.build, status, units, state.side, env, aircraft, settings.OPTIONS)
     if not okBuild then
@@ -276,7 +277,8 @@ local function generate()
             warn('cannot write ' .. path .. ': ' .. tostring(err))
         end
     end
-    info('cartridges written for ' .. state.side .. ': ' .. table.concat(summary, ', '))
+    local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
+    info('cartridges written for ' .. state.side .. around .. ': ' .. table.concat(summary, ', '))
     chat('SarmatDTC: DTC updated for ' .. string.upper(state.side) .. ' - ' .. table.concat(summary, ', '))
 end
 
@@ -358,10 +360,11 @@ function callbacks.onPlayerChangeSlot(id)
     local side = mySide()
     if not side then return end   -- spectators
     state.side = side
-    if CONFIG.LOG_SLOT then
-        local ok, err = pcall(logSlot, side)
-        if not ok then warn('slot info failed: ' .. tostring(err)) end
-    end
+    -- spawn base position: modules may prioritise objects around it
+    local ok, slot = pcall(slotInfo, side)
+    if not ok then warn('slot info failed: ' .. tostring(slot)) end
+    state.spawn = (ok and slot.x and slot.z) and { x = slot.x, z = slot.z, name = slot.base } or nil
+    if ok and CONFIG.LOG_SLOT then logSlot(side, slot) end
     if not (state.fetchedAt and now() - state.fetchedAt < CONFIG.REFETCH_SEC) then
         generate()                -- right away from the older cache, fresh data follows
     end

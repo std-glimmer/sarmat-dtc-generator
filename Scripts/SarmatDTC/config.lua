@@ -13,7 +13,7 @@ return {
     -- and of its outputs (`outputs` = { [output id] = { enabled = ..., dir = ..., file = ... } };
     -- the native DCS cartridge has id "dcs-dtc").
     OPTIONS = {
-        -- ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15 },
+        -- ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15, SPAWN_WEIGHT = 0.5, ENEMY_FACTOR = 0.7 },
         -- ["F-16C_50"] = { outputs = { ["dcs-dtc"] = { enabled = false } } },
     },
 }

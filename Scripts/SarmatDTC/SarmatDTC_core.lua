@@ -6,6 +6,7 @@
 --     terrain   = "Syria",                            -- DCS terrain id written into the cartridges
 --     getHeight = function(x, z) return m end,        -- optional, terrain elevation [m]
 --     toLatLon  = function(x, z) return lat, lon end, -- optional
+--     spawn     = { x, z, name },                     -- optional, own slot's start base
 -- }
 -- Coordinates: SARMAT x/z are DCS map coordinates; DTC files store them as x (north) / y (east).
 --
@@ -123,17 +124,28 @@ function M.chain(line, maxLines, maxPerLine)
     return lines
 end
 
--- Copy of `list` sorted by distance to the front line, cut to `limit` items.
-function M.byFront(list, front, limit)
+-- Copy of `list` sorted by score(p) ascending (lower = more important), cut to `limit` items.
+-- Equal scores keep the input order.
+function M.byScore(list, score, limit)
     local sorted = {}
     for i, p in ipairs(list) do
-        sorted[i] = { d = M.distToPolyline(p.x, p.z, front), p = p }
+        sorted[i] = { s = score(p), i = i, p = p }
     end
-    table.sort(sorted, function(a, b) return a.d < b.d end)
+    table.sort(sorted, function(a, b)
+        if a.s ~= b.s then return a.s < b.s end
+        return a.i < b.i
+    end)
     local out = {}
     for i = 1, math.min(limit or #sorted, #sorted) do out[i] = sorted[i].p end
     return out
 end
+
+-- Copy of `list` sorted by distance to the front line, cut to `limit` items.
+function M.byFront(list, front, limit)
+    return M.byScore(list, function(p) return M.distToPolyline(p.x, p.z, front) end, limit)
+end
+
+M.dist = dist
 
 ------------------------------------------------------------------------------
 -- terrain helpers for modules
@@ -302,6 +314,7 @@ end
 --              -- adLead = the lead unit itself is that AD type
 --     sites  = { {x, z, friendly, ad, name}, ... }  -- SAM sites not covered by a live AD group
 --     farps  = { {x, z, friendly, name, kind}, ... } -- FARPs and FOBs, twin pads merged
+--     spawn  = { x, z, name } | nil                 -- own start base (env.spawn), set by M.build
 --     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
 -- }
 function M.situation(status, units, mySide)
@@ -448,6 +461,7 @@ end
 function M.build(status, units, mySide, env, modules, overrides)
     local situation = M.situation(status, units, mySide)
     situation.env = env
+    if env.spawn and env.spawn.x and env.spawn.z then situation.spawn = env.spawn end
     local out, errors = {}, {}
     for _, mod in ipairs(modules) do
         local ov = overrides and overrides[mod.type] or {}

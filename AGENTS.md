@@ -99,7 +99,10 @@ status.json + units.json ──core.situation()──► situation ──► air
 
 ## Отбор точек AH-64 (`aircraft/AH-64D_BLK_II.lua`)
 
-- Расстояние до ломаной фронта — единственный критерий приоритета (`lib.byFront`).
+- Приоритет (`lib.byScore`, меньший вес побеждает): `вес = расстояние до фронта + SPAWN_WEIGHT ×
+  расстояние до своей базы спавна`, у вражеских объектов вес × `ENEMY_FACTOR` (по умолчанию 0.5 и 0.7).
+  Один и тот же вес используется для CTRLM и TGT. Если база спавна неизвестна, остаются фронт
+  и приоритет вражеских. `SPAWN_WEIGHT = 0` — игнорировать спавн, `ENEMY_FACTOR = 1` — без предпочтения.
 - CTRLM: свои и вражеские наземные группы (символ по большинству типов: armor/mech/arty/inf/generic),
   свои ПВО (`AD`, id 12), FARP и FOB (id 68; текст `F01…` — свои, `E01…` — вражеские).
   Опция `CTRLM_FARPS = nil` — общий список (решение владельца: оставить так, без квоты);
@@ -120,7 +123,7 @@ status.json + units.json ──core.situation()──► situation ──► air
 - `Scripts/JSON.lua` из DCS: старый JSON.lua Фридла; пустые таблицы кодирует как `[]`, загрузчикам DCS это не мешает.
 - Lua 5.1: без `goto`, без `//`, `#` для массивов, в строке замены `gsub` знак `%` надо экранировать.
 
-## Информация о слоте (для будущих фич)
+## Информация о слоте и база спавна
 
 `net.get_player_info(myId, 'slot')` → id слота (unitId; у многоместных `unitId_seat`).
 `DCS.getAvailableSlots('red'|'blue')` → `{unitId, type, role, callsign, groupName, country,
@@ -128,8 +131,10 @@ airdromeId?, helipadId?, takeOffType, multicrew_place}`.
 `airdromeId` → `Terrain.GetTerrainConfig('Airdromes')[id]` (`display_name`/`names.en`, `reference_point.x/y`);
 `helipadId` → `DCS.getFarpsAndCarriersMissionData().farps[id]` (или `.carriers`) → `name, x, y`.
 Это то же, что использует экран выбора роли (`Scripts/UI/MultiplayerSelectRoleMap`). При `CONFIG.LOG_SLOT`
-результат пишется в `dcs.log` строкой `own slot (...)`. На живом сервере SARMAT поля ещё не проверялись,
-особенно для динамических слотов.
+результат пишется в `dcs.log` строкой `own slot (...)`. Координаты базы при каждой смене слота
+сохраняются в `state.spawn` и передаются модулям как `env.spawn` → `situation.spawn = {x, z, name}`
+(в логе: `cartridges written for <side> around <base>`). На живом сервере SARMAT поля ещё
+не проверялись, особенно для динамических слотов: если координат нет, `spawn = nil`.
 
 ## Скиллы
 
