@@ -297,6 +297,80 @@ function M.groundClassOf(types)
 end
 
 ------------------------------------------------------------------------------
+-- threat catalogue (ED names shared by the F-16 THREAT_PTS and F/A-18 MEZ_THRTS editors,
+-- CoreMods/aircraft/{F-16C/DTC/MPD/THREAT_PTS_defs,FA-18C/DTC/SA/MEZ_THRTS_defs}.lua)
+------------------------------------------------------------------------------
+
+-- AD key -> { name = ED threat name ("Custom" if ED has none), text (<= 3 chars), range [m], alt [m] }
+M.THREAT_DEFS = {
+    ["SA-10"]    = { name = "SAM SA-10 'Grumble'",  text = "10", range = 120000, alt = 27000 },
+    ["SA-11"]    = { name = "SAM SA-11 'Gadfly'",   text = "11", range = 50000,  alt = 22000 },
+    PATRIOT      = { name = "SAM Patriot",          text = "P",  range = 100000, alt = 160000 },
+    ["SA-5"]     = { name = "SAM SA-5 'Gammon'",    text = "5",  range = 255000, alt = 40000 },
+    ["SA-2"]     = { name = "SAM SA-2 'Guideline'", text = "2",  range = 43000,  alt = 25000 },
+    HAWK         = { name = "SAM Hawk",             text = "HK", range = 45000,  alt = 20000 },
+    ["SA-6"]     = { name = "SAM SA-6 'Gainful'",   text = "6",  range = 25000,  alt = 14000 },
+    ["SA-3"]     = { name = "SAM SA-3 'Goa'",       text = "3",  range = 18000,  alt = 20000 },
+    NASAMS       = { name = "SAM NASAMS",           text = "NS", range = 15000,  alt = 17000 },
+    ["SA-15"]    = { name = "SAM SA-15 'Gauntlet'", text = "15", range = 12000,  alt = 8000 },
+    PANTSIR      = { name = "SAM SA-22 'Greyhound'", text = "22", range = 20000, alt = 15000 },
+    ["SA-19"]    = { name = "SAM SA-19 'Grison'",   text = "19", range = 8000,   alt = 3500 },
+    ROLAND       = { name = "SAM Roland",           text = "RO", range = 8000,   alt = 6000 },
+    ["SA-8"]     = { name = "SAM SA-8 'Gecko'",     text = "8",  range = 10300,  alt = 5000 },
+    RAPIER       = { name = "SAM Rapier",           text = "RP", range = 6800,   alt = 4000 },
+    ["HQ-7"]     = { name = "SAM HQ-7",             text = "7",  range = 15000,  alt = 5500 },
+    ["SA-13"]    = { name = "SAM SA-13 'Gopher'",   text = "13", range = 5000,   alt = 3500 },
+    CHAPARRAL    = { name = "SAM Chaparrel",        text = "CH", range = 8500,   alt = 10000 },
+    ["SA-9"]     = { name = "SAM SA-9 'Gaskin'",    text = "9",  range = 4200,   alt = 5000 },
+    STINGER      = { name = "SAM Avenger",          text = "AV", range = 4500,   alt = 5200 },
+    MANPADS      = { name = "Custom",               text = "MP", range = 5000,   alt = 3500 },
+    ["ZSU-23-4"] = { name = "SPAAA ZSU-23-4",       text = "A",  range = 2500,   alt = 2500 },
+    GEPARD       = { name = "SPAAA Gepard",         text = "A",  range = 4000,   alt = 3000 },
+    VULCAN       = { name = "SPAAA Vulcan",         text = "A",  range = 2000,   alt = 5000 },
+    ["ZSU-57"]   = { name = "SPAAA ZSU-57-2",       text = "A",  range = 7000,   alt = 7000 },
+    ["ZU-23"]    = { name = "Custom",               text = "ZU", range = 2500,   alt = 2500 },
+    AAA          = { name = "Custom",               text = "A",  range = 2500,   alt = 2500 },
+    SAM          = { name = "Custom",               text = "SAM", range = 15000, alt = 9144 },  -- unrecognised site
+    -- RADAR has no entry: radars are not threat rings
+}
+
+-- Enemy air defence as threat rings: live AD groups + SAM sites, without radars and threats
+-- shorter than opt.MIN_RANGE, one ring per type within opt.DEDUP_M. Ordered by how far the ring
+-- edge is from the front (rings reaching over the front first), cut to `limit`.
+-- Returns { {x, z, key, name, text, range, alt}, ... }.
+function M.enemyThreats(s, limit, opt)
+    opt = opt or {}
+    local minRange, dedup = opt.MIN_RANGE or 0, opt.DEDUP_M or 5000
+    local candidates = {}
+    local function add(p, key)
+        local def = M.THREAT_DEFS[key]
+        if def and def.range >= minRange then
+            candidates[#candidates + 1] = { x = p.x, z = p.z, key = key, name = def.name, text = def.text,
+                range = def.range, alt = def.alt }
+        end
+    end
+    for _, g in ipairs(s.groups) do
+        if g.ad and not g.friendly then add(g, g.ad) end
+    end
+    for _, site in ipairs(s.sites) do
+        if not site.friendly then add(site, site.ad) end
+    end
+    local sorted = M.byScore(candidates, function(t)
+        return M.distToPolyline(t.x, t.z, s.front) - t.range
+    end)
+    local out = {}
+    for _, t in ipairs(sorted) do
+        if #out >= limit then break end
+        local dup = false
+        for _, o in ipairs(out) do
+            if o.key == t.key and dist(o, t) < dedup then dup = true break end
+        end
+        if not dup then out[#out + 1] = t end
+    end
+    return out
+end
+
+------------------------------------------------------------------------------
 -- situation
 ------------------------------------------------------------------------------
 

@@ -137,6 +137,25 @@ do
         and back.name == value.name and back.nested.list[2] == 4, "toLua round trip")
 end
 
+-- threat catalogue must match the DCS editors' lists
+do
+    dofile(dcsDir .. "\\CoreMods\\aircraft\\F-16C\\DTC\\MPD\\THREAT_PTS_defs.lua")
+    dofile(dcsDir .. "\\CoreMods\\aircraft\\FA-18C\\DTC\\SA\\MEZ_THRTS_defs.lua")
+    local f16, f18 = {}, {}
+    for _, d in ipairs(THREAT_PTS_defs) do f16[d.name] = true end
+    for _, d in ipairs(MEZ_THRTS_defs) do f18[d.name] = true end
+    for key, def in pairs(core.THREAT_DEFS) do
+        if def.name ~= "Custom" then
+            check(f16[def.name], "THREAT_DEFS[" .. key .. "] '" .. def.name .. "' not in F-16 THREAT_PTS_defs")
+            check(f18[def.name], "THREAT_DEFS[" .. key .. "] '" .. def.name .. "' not in F/A-18 MEZ_THRTS_defs")
+        end
+        check(#def.text <= 3, "THREAT_DEFS[" .. key .. "] text longer than 3")
+    end
+    for _, ad in ipairs(core.AD_TYPES) do
+        check(ad.key == "RADAR" or core.THREAT_DEFS[ad.key], "AD key " .. ad.key .. " has no THREAT_DEFS entry")
+    end
+end
+
 -- AH-64 priority: around the spawn base, enemy first, still near the front
 do
     local ah = mods["AH-64D_BLK_II"]
@@ -252,6 +271,44 @@ for _, side in ipairs({ "blue", "red" }) do
         check(#geo >= 2 and #geo <= mods["F-16C_50"].options.POINTS, tag .. ": F-16 points " .. #geo)
         check(geo[1].id == "GEO_LINES31", tag .. ": F-16 first id")
 
+        -- SAM threats: F-16 THREAT PTS, F/A-18 MEZ THRTS
+        local enemyAD = {}
+        local sit = core.situation(status, units, side)
+        for _, g in ipairs(sit.groups) do if g.ad and not g.friendly then enemyAD[#enemyAD + 1] = g end end
+        for _, st in ipairs(sit.sites) do if not st.friendly then enemyAD[#enemyAD + 1] = st end end
+        local function isEnemyAD(p)
+            for _, a in ipairs(enemyAD) do
+                if math.abs(a.x - p.x) < 1 and math.abs(a.z - p.y) < 1 then return true end
+            end
+            return false
+        end
+        local fopt = mods["F-16C_50"].options
+        local mpd = c["F-16C_50"].MPD
+        check(mpd.mirror_THREAT_PTS == false, tag .. ": F-16 mirror_THREAT_PTS")
+        check(#mpd.THREAT_PTS > 0 and #mpd.THREAT_PTS <= fopt.THREATS, tag .. ": F-16 threats " .. #mpd.THREAT_PTS)
+        for i, t in ipairs(mpd.THREAT_PTS) do
+            check(t.id == "THREAT_PTS" .. (55 + i) and t.number == i, tag .. ": F-16 threat id/number")
+            check(THREAT_PTS_defs[t.def_num].name == t.threatName, tag .. ": F-16 def_num " .. t.def_num .. " vs " .. t.threatName)
+            check(t.radius >= fopt.MIN_RANGE and #t.text <= 3 and t.ring == true, tag .. ": F-16 threat fields")
+            check(isEnemyAD(t), tag .. ": F-16 threat is not an enemy AD position")
+            for j = 1, i - 1 do
+                local o = mpd.THREAT_PTS[j]
+                local d = math.sqrt((o.x - t.x) ^ 2 + (o.y - t.y) ^ 2)
+                check(o.threatName ~= t.threatName or d >= fopt.DEDUP_M, tag .. ": F-16 duplicate ring " .. t.threatName)
+            end
+        end
+        local hopt = mods["FA-18C_hornet"].options
+        local sa = c["FA-18C_hornet"].SA
+        check(sa.mirror_MEZ_THRTS == false, tag .. ": F/A-18 mirror_MEZ_THRTS")
+        check(#sa.MEZ_THRTS > 0 and #sa.MEZ_THRTS <= hopt.THREATS, tag .. ": F/A-18 threats " .. #sa.MEZ_THRTS)
+        check(#sa.MEZ_THRTS >= #mpd.THREAT_PTS, tag .. ": F/A-18 has fewer threats than F-16")
+        for i, t in ipairs(sa.MEZ_THRTS) do
+            check(t.id == "MEZ_THRTS_" .. i and t.num == i, tag .. ": F/A-18 MEZ id/num")
+            check(t.threat_ring_radius >= hopt.MIN_RANGE / 1852 - 0.01 and t.threat_level == 1, tag .. ": F/A-18 MEZ fields")
+            check(isEnemyAD(t), tag .. ": F/A-18 threat is not an enemy AD position")
+        end
+        results[tag .. "#threats"] = { f16 = #mpd.THREAT_PTS, f18 = #sa.MEZ_THRTS, first = mpd.THREAT_PTS[1].threatName }
+
         local fo = mods["FA-18C_hornet"].options
         local flot = c["FA-18C_hornet"].SA.FAOR_FLOT.FLOT
         check(#flot >= 1 and #flot <= fo.LINES, tag .. ": F/A-18 lines")
@@ -287,7 +344,11 @@ for tag in pairs(results) do tags[#tags + 1] = tag end
 table.sort(tags)
 for _, tag in ipairs(tags) do
     local r = results[tag]
-    print(string.format("%-14s CTRLM own=%d enemy=%d farps=%d  TGT=%d", tag, r.own, r.enemy, r.farps, r.tgt))
+    if r.f16 then
+        print(string.format("%-22s F-16 THREAT PTS=%d  F/A-18 MEZ=%d  first: %s", tag, r.f16, r.f18, r.first))
+    else
+        print(string.format("%-22s CTRLM own=%d enemy=%d farps=%d  TGT=%d", tag, r.own, r.enemy, r.farps, r.tgt))
+    end
 end
 if failures > 0 then
     print(failures .. " check(s) failed")

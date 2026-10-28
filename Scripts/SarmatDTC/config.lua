@@ -14,6 +14,8 @@ return {
     -- the native DCS cartridge has id "dcs-dtc").
     OPTIONS = {
         -- ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15, SPAWN_WEIGHT = 0.5, ENEMY_FACTOR = 0.7 },
-        -- ["F-16C_50"] = { outputs = { ["dcs-dtc"] = { enabled = false } } },
+        -- ["F-16C_50"] = { THREATS = 15, MIN_RANGE = 6000 },          -- MIN_RANGE in metres
+        -- ["FA-18C_hornet"] = { THREATS = 0 },                         -- 0 = threats from the mission
+        -- ["F-14BU"] = { outputs = { ["dcs-dtc"] = { enabled = false } } },
     },
 }
