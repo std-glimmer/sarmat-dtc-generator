@@ -27,7 +27,8 @@
 -- }
 -- `build` is a shorthand for the output { id = "dcs-dtc", format = "dcs-dtc", dir = "DTC",
 -- file = FILE_PREFIX .. "{type}.dtc" } that always runs first. `content` is a table for
--- json/lua/dcs-dtc (for dcs-dtc: the cartridge "data" table) or a string for text.
+-- json/lua/dcs-dtc (for dcs-dtc: the cartridge "data" table) or a string for text; an extra
+-- output may return nil content = nothing to write (logged as "not written").
 -- `built[id]` holds the content of outputs already built for this module, so other formats can
 -- reuse the native cartridge (built even when its output is disabled, then only not written).
 -- `stats` is a flat {name = number} table for the log.
@@ -594,6 +595,7 @@ end
 -- (`enabled`, `dir`, `file`). `bases[type]` = base cartridge data (config.lua BASE_DTC) that the
 -- native cartridge is laid over (M.applyBase). A failing module or output does not stop the others.
 -- Returns list of { type, id, format, dir, file, content, stats, base, dropped }, list of error strings.
+-- An extra output whose build returns nil is listed as { type, id, skip = true, stats } (nothing to write).
 function M.build(status, units, mySide, env, modules, overrides, bases)
     local situation = M.situation(status, units, mySide)
     situation.env = env
@@ -615,7 +617,12 @@ function M.build(status, units, mySide, env, modules, overrides, bases)
                     if ok and content ~= nil and o2.id == M.NATIVE_OUTPUT and type(base) == "table" then
                         ok, content, dropped = pcall(M.applyBase, base, content, mod.base, env.terrain)
                     end
-                    if ok and content ~= nil then
+                    if ok and content == nil and o2.id ~= M.NATIVE_OUTPUT then
+                        -- output prepared its data but has nothing to write (e.g. format not known yet)
+                        if o2.enabled ~= false then
+                            out[#out + 1] = { type = mod.type, id = o2.id, skip = true, stats = stats or {} }
+                        end
+                    elseif ok and content ~= nil then
                         if o2.format == "dcs-dtc" and type(content) == "table" then content.type = mod.type end
                         built[o2.id] = content
                         if o2.enabled ~= false then

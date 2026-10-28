@@ -7,6 +7,7 @@ return {
         "F-16C_50",
         "FA-18C_hornet",
         "F-14BU",
+        "F-15ESE",          -- example: prepares data only, writes no file yet (format not decided)
     },
 
     -- Base DCS cartridge per aircraft (DCS native .dtc only): every field the script does not fill

@@ -46,8 +46,32 @@ for _, m in ipairs(modules) do
     mods[m.type] = m
 end
 check(mods["_template"] == nil and mods["MyAircraft_DTC_type"] == nil, "template must not be loaded")
-for _, t in ipairs({ "AH-64D_BLK_II", "F-16C_50", "FA-18C_hornet", "F-14BU" }) do
+for _, t in ipairs({ "AH-64D_BLK_II", "F-16C_50", "FA-18C_hornet", "F-14BU", "F-15ESE" }) do
     check(mods[t] ~= nil, "module not found: " .. t)
+end
+
+-- F-15E example: prepares all data, writes nothing
+do
+    local f15 = mods["F-15ESE"]
+    local out, errors = core.build(status, units, "blue", env, { f15 }, {})
+    check(#errors == 0 and #out == 1 and out[1].skip == true and out[1].content == nil, "F-15E: output must be skipped")
+    check(out[1].stats.front > 0 and out[1].stats.threats > 0 and out[1].stats.targets > 0, "F-15E: stats empty")
+
+    local s = core.situation(status, units, "blue")
+    s.env, s.spawn = env, { x = 96000, z = 180000, name = "north" }
+    local d = f15.prepare(s, core, f15.options)
+    check(d.side == "blue" and d.terrain == "Syria" and d.spawn and d.spawn.name == "north", "F-15E: header/spawn")
+    check(#d.front >= 2 and #d.front <= f15.options.FRONT_PTS, "F-15E: front")
+    check(#d.threats > 0 and #d.threats <= f15.options.THREATS and d.threats[1].rangeNm > 0, "F-15E: threats")
+    check(#d.targets > 0 and #d.targets <= f15.options.TARGETS and #d.own > 0 and #d.farps > 0, "F-15E: lists")
+    for _, list in ipairs({ d.front, d.threats, d.targets, d.own, d.farps }) do
+        for _, p in ipairs(list) do
+            check(p.x and p.z and p.lat ~= 0 and p.lon ~= 0 and p.elevFt == math.floor(p.elev * 3.28084 + 0.5),
+                "F-15E: point without full coordinates")
+        end
+    end
+    for _, t in ipairs(d.targets) do check(t.class and t.type and t.count, "F-15E: target fields") end
+    check(pcall(JSON.encode, JSON, d), "F-15E: prepared data not serializable")
 end
 
 -- broken / disabled modules must not stop the others
@@ -301,22 +325,24 @@ for _, side in ipairs({ "blue", "red" }) do
         local files = {}
         for _, o in ipairs(list) do
             local label = tag .. ": " .. o.type .. "/" .. o.id
-            local path = string.lower(o.dir .. "\\" .. o.file)
-            check(not files[path], label .. " writes the same file as another output")
-            files[path] = true
-            check(string.find(o.file, "{") == nil and string.find(o.dir, "{") == nil, label .. " unexpanded placeholder")
-            if o.format == "dcs-dtc" then
-                check(o.content.type == o.type, label .. " data.type mismatch")
-                check(o.content.terrain == "Syria", label .. " terrain")
-                check(o.content.name == core.CARTRIDGE_NAME, label .. " name")
-            end
-            if o.format == "text" then
-                check(type(o.content) == "string", label .. " text content must be a string")
-            else
-                check(pcall(JSON.encode, JSON, o.content), label .. " not serializable")
-            end
             for k, v in pairs(o.stats) do
                 check(type(v) == "number", label .. " stat " .. k .. " is not a number")
+            end
+            if not o.skip then
+                local path = string.lower(o.dir .. "\\" .. o.file)
+                check(not files[path], label .. " writes the same file as another output")
+                files[path] = true
+                check(string.find(o.file, "{") == nil and string.find(o.dir, "{") == nil, label .. " unexpanded placeholder")
+                if o.format == "dcs-dtc" then
+                    check(o.content.type == o.type, label .. " data.type mismatch")
+                    check(o.content.terrain == "Syria", label .. " terrain")
+                    check(o.content.name == core.CARTRIDGE_NAME, label .. " name")
+                end
+                if o.format == "text" then
+                    check(type(o.content) == "string", label .. " text content must be a string")
+                else
+                    check(pcall(JSON.encode, JSON, o.content), label .. " not serializable")
+                end
             end
         end
 

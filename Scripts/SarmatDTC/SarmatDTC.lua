@@ -294,31 +294,38 @@ local function generate()
     for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
 
     local summary = {}
+    local function statsText(stats)
+        local parts = {}
+        for k, v in pairs(stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
+        table.sort(parts)
+        return '(' .. table.concat(parts, ' ') .. ')'
+    end
     for _, f in ipairs(files) do
-        local encode = ENCODERS[f.format]
-        local okE, text = false, 'unknown format ' .. tostring(f.format)
-        if encode then okE, text = pcall(encode, f.content, f.type) end
-        local dir = resolveDir(f.dir)
-        local path = dir .. f.file
-        local okW, err = false, text
-        if okE and type(text) == 'string' then
-            mkdirs(dir)
-            okW, err = writeFileAtomic(path, text)
-        end
-        if okW then
-            local parts = {}
-            for k, v in pairs(f.stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
-            table.sort(parts)
-            local label = f.type .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
-            if f.base then
-                label = label .. ' +base'
-                if #f.dropped > 0 then
-                    warn(f.type .. ': base DTC is for another map, not used: ' .. table.concat(f.dropped, ', '))
-                end
-            end
-            summary[#summary + 1] = label .. ' (' .. table.concat(parts, ' ') .. ')'
+        if f.skip then
+            summary[#summary + 1] = f.type .. '/' .. f.id .. ' not written ' .. statsText(f.stats)
         else
-            warn('cannot write ' .. path .. ': ' .. tostring(err))
+            local encode = ENCODERS[f.format]
+            local okE, text = false, 'unknown format ' .. tostring(f.format)
+            if encode then okE, text = pcall(encode, f.content, f.type) end
+            local dir = resolveDir(f.dir)
+            local path = dir .. f.file
+            local okW, err = false, text
+            if okE and type(text) == 'string' then
+                mkdirs(dir)
+                okW, err = writeFileAtomic(path, text)
+            end
+            if okW then
+                local label = f.type .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
+                if f.base then
+                    label = label .. ' +base'
+                    if #f.dropped > 0 then
+                        warn(f.type .. ': base DTC is for another map, not used: ' .. table.concat(f.dropped, ', '))
+                    end
+                end
+                summary[#summary + 1] = label .. ' ' .. statsText(f.stats)
+            else
+                warn('cannot write ' .. path .. ': ' .. tostring(err))
+            end
         end
     end
     local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
