@@ -1,0 +1,18 @@
+# The repository root is the DCS "Saved Games\DCS.openbeta" folder.
+# Everything is ignored except the SarmatDTC files (allowlist).
+/*
+!/.gitignore
+!/.gitattributes
+!/AGENTS.md
+!/CLAUDE.md
+!/README.md
+
+!/Scripts/
+/Scripts/*
+!/Scripts/SarmatDTC/
+!/Scripts/Hooks/
+/Scripts/Hooks/*
+!/Scripts/Hooks/SarmatDTC-hook.lua
+
+# runtime download cache
+/Scripts/SarmatDTC/cache/

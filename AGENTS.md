@@ -1,0 +1,142 @@
+# AGENTS.md — SarmatDTC (sarmat-dtc-generator)
+
+Мод для DCS World: при подключении к мультиплеерному серверу, в названии которого есть **SARMAT**,
+скачивает обстановку с живой карты <https://baikalprimestudio.com/map.html> и при выборе слота
+генерирует картриджи DTC для AH-64D, F-16C, F/A-18C и F-14BU.
+
+## Где лежит репозиторий
+
+Корень репозитория — папка `%USERPROFILE%\Saved Games\DCS.openbeta`. В ней много чужих файлов
+(конфиги, логи, ливреи, другие моды). `.gitignore` работает как **allowlist**: в git попадает только
+то, что явно разрешено. Новый файл мода нужно добавить в `.gitignore` через `!`, иначе git его не увидит.
+Ничего вне перечисленных ниже путей не трогать и не коммитить.
+
+| Путь | Назначение |
+|---|---|
+| `Scripts/Hooks/SarmatDTC-hook.lua` | Загрузчик: DCS исполняет все файлы из `Scripts/Hooks` в GUI-окружении |
+| `Scripts/SarmatDTC/SarmatDTC.lua` | Связь с DCS: колбэки, определение сервера и стороны, загрузка, запись файлов. `CONFIG` в начале файла |
+| `Scripts/SarmatDTC/SarmatDTC_core.lua` | Чистая логика: отбор точек, классификация юнитов, линии фронта, данные DTC. Без зависимостей от DCS |
+| `Scripts/SarmatDTC/fetch.vbs` | Запускает `fetch.cmd` в скрытом окне и сразу возвращает управление |
+| `Scripts/SarmatDTC/fetch.cmd` | `curl.exe` → `cache/status.json`, `cache/units.json`, затем `cache/done.flag` (`ok`/`fail`) |
+| `Scripts/SarmatDTC/tests/` | Офлайн-тесты и фикстуры (снимок данных карты, Сирия) |
+| `Scripts/SarmatDTC/cache/` | Кэш загрузки, генерируется во время работы, в git не попадает |
+
+Результат: `DTC/SARMAT_<type>.dtc` (`AH-64D_BLK_II`, `F-16C_50`, `FA-18C_hornet`, `F-14BU`).
+Каждый файл существует в одном экземпляре и перезаписывается при каждом выборе слота.
+
+## Поток работы
+
+1. `onMissionLoadEnd`: `DCS.isMultiplayer()` и `net.get_server_settings().name` содержит `sarmat`
+   (без учёта регистра) → `state.active`. Карта местности берётся из `Terrain.GetTerrainConfig('id')`.
+   Сирия → `/data/`, Кавказ → `/k/data/`. Запускается фоновая загрузка.
+2. `onSimulationFrame`: раз в секунду проверяется `cache/done.flag`.
+3. `onPlayerChangeSlot(id)` для своего id: сторона (`1`=red, `2`=blue; `0`, то есть зритель, игнорируется).
+   Если кэшу больше `REFETCH_SEC`, DTC сразу генерируется из старого кэша, затем идёт перезагрузка,
+   и после неё DTC генерируется ещё раз.
+4. Перед генерацией `status.theatre` сверяется с картой миссии: при несовпадении генерация пропускается.
+
+## Данные сайта (публичный JSON, координаты уже в системе DCS)
+
+- `data/status.json`: `front[] {x,z}` — линия фронта; `objectives[]` (`kind`: `FARP`/`FOB`/`Airfield`…,
+  `owner`); `strong[]` (`kind: "SAM"`, `name` вида `"SAM SA-11 RED-1"`, `dead`; `alive=0` означает
+  «спит/не заспавнен», а не «уничтожен»); `theatre`.
+- `data/units.json`: `groups[] {cat, side, type, types[], count, x, z, name}`, где `cat` — `ground`/`ship`.
+- DCS x/z → в DTC пишутся как `x` (север) / `y` (восток).
+- Сайт работает только по HTTPS (HTTP отдаёт 308) и иногда таймаутит соединения. Не долбить его
+  запросами при отладке: используйте фикстуры.
+
+## Правила DTC (сверено с `CoreMods/aircraft/*/DTC/*.lua` в установке DCS)
+
+- Файл — JSON `{"data": {...}, "name": "", "type": "<type>"}`. Импорт в DCS:
+  `Scripts/UI/DTC_manager/DTC_manager_PanelCommon.lua` → `setData` модуля. Загрузчик **сбрасывает
+  всё к умолчаниям и накладывает поля из файла**, поэтому пишем только разметку («чистые» шаблоны).
+- AH-64D и F-16C импортируют навигацию, только если `terrain` совпадает с текущей картой.
+- Лимиты (`core.LIMITS`): AH-64 CTRLM 49 (номера 51–99, `text` ≤ 3 символов), TGT 50, Lines 15×(2–4 вершины);
+  F-16 GEO LINES 25 точек (31–55, линия L1, `mirror_GEO_LINES=false`); F/A-18 FLOT 3×7
+  (`mirror_MEZ_THRTS=true` обязателен, иначе сбрасывается в nil); F-14 4×9, но не больше 20 точек на план,
+  поэтому используем 2×9.
+- Линии длиннее лимита: `M.simplify` (Дуглас–Пекер по числу точек) → `M.chain`
+  (соседние линии делят конечную точку).
+- ID символов AH-64 — `CoreMods/aircraft/AH-64D/DTC/NAV/Points.lua` (`PointsID`). Тип линии FLOT = `type_num 4`.
+
+## Отбор точек AH-64
+
+- Расстояние до ломаной фронта — единственный критерий приоритета.
+- CTRLM: свои и вражеские наземные группы (символ по большинству типов: armor/mech/arty/inf/generic),
+  свои ПВО (`AD`, id 12), FARP и FOB (id 68; текст `F01…` — свои, `E01…` — вражеские).
+  `CONFIG.CTRLM_FARPS = nil` — общий список (решение владельца: оставить так, без квоты);
+  при числе N под FARP-ы резервируется до N слотов.
+- TGT: только вражеские ПВО. Группа, где есть хоть один ПВО-юнит, считается ПВО; тип — самый
+  опасный по порядку `AD_TYPES`. Плюс ЗРК-площадки из `strong`, не покрытые живой группой в радиусе 2 км.
+
+## Ловушки окружения (проверено, не «упрощать» обратно)
+
+- **`os.execute` в Lua от ED молча игнорирует команды длиннее ~256 символов**: не выполняет и ничего
+  не возвращает. Команда запуска сделана короткой (VBS сам вычисляет папку кэша), а при длине больше 250
+  в лог пишется предупреждение.
+- `start "" file.cmd` хостит батник в `cmd /K`: окно остаётся висеть. Поэтому используется `wscript` + `Run(..., 0, False)`.
+- `.cmd`/`.vbs` должны быть в CRLF (`.gitattributes`). Инструмент Write пишет LF: после правок проверять
+  `file fetch.cmd`.
+- В GUI-окружении нет HTTPS в Lua (только LuaSocket без SSL), поэтому используется системный `curl.exe`.
+- `Scripts/JSON.lua` из DCS: старый JSON.lua Фридла; пустые таблицы кодирует как `[]`, загрузчикам DCS это не мешает.
+- Lua 5.1: без `goto`, без `//`, `#` для массивов, в строке замены `gsub` знак `%` надо экранировать.
+
+## Информация о слоте (для будущих фич)
+
+`net.get_player_info(myId, 'slot')` → id слота (unitId; у многоместных `unitId_seat`).
+`DCS.getAvailableSlots('red'|'blue')` → `{unitId, type, role, callsign, groupName, country,
+airdromeId?, helipadId?, takeOffType, multicrew_place}`.
+`airdromeId` → `Terrain.GetTerrainConfig('Airdromes')[id]` (`display_name`/`names.en`, `reference_point.x/y`);
+`helipadId` → `DCS.getFarpsAndCarriersMissionData().farps[id]` (или `.carriers`) → `name, x, y`.
+Это то же, что использует экран выбора роли (`Scripts/UI/MultiplayerSelectRoleMap`). При `CONFIG.LOG_SLOT`
+результат пишется в `dcs.log` строкой `own slot (...)`. На живом сервере SARMAT поля ещё не проверялись,
+особенно для динамических слотов.
+
+## Скиллы
+
+### 1. Запуск тестов (после любого изменения кода)
+```powershell
+powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
+# другой путь к DCS: -DcsDir "D:\DCS World"; сохранить сгенерированные DTC: -OutDir <папка>
+```
+- `test_core.lua`: ядро на фикстурах для обеих сторон, с квотой и без; проверка всех лимитов и сцепки линий.
+- `test_hook.lua`: `SarmatDTC.lua` с заглушками `DCS`/`net`/`log`/`lfs`/`terrain` и **реальной** загрузкой
+  через `wscript → fetch.cmd → curl` по `file://`. Временная папка лежит в коротком `%TEMP%\sdtc*`
+  из-за лимита в 256 символов.
+- Интерпретатор — `bin\luae.exe` из установки DCS (Lua 5.1), запускать с рабочей папкой в корне DCS.
+- В DCS реально не запускается: после изменений в колбэках просить пользователя проверить в игре
+  (`Logs\dcs.log`, тег `SARMAT.DTC`).
+
+### 2. Добавить новый модуль (самолёт/вертолёт)
+1. Найти `CoreMods/aircraft/<module>/DTC/` (или `Mods/aircraft/...`) в установке DCS (только чтение).
+2. В `<type>_DTC.lua` прочитать `data` (поле `type`!) и `setData`: какие ключи импортируются,
+   есть ли проверка `terrain`, какие `mirror_*` нужно задать явно.
+3. Найти лимиты (`MAX_*`) и структуру точек/линий в файле нужной секции.
+4. Образцы реальных файлов — в `DTC/` пользователя (сохранены редактором DCS).
+5. Добавить `buildXxx` в `SarmatDTC_core.lua` и вызов `add(...)` в `M.build`, лимиты — в `M.LIMITS`,
+   проверки — в `test_core.lua`.
+
+### 3. Обновить классификацию юнитов/ПВО
+- `AD_TYPES` (порядок = приоритет угрозы, первый совпавший побеждает) и `GROUND_CLASSES` в ядре.
+- Шаблоны — Lua patterns по строке `" " .. lower(type) .. " "`: экранировать `-` как `%-`,
+  для номеров использовать `[^%d]` (`sa%-2[^%d]` не совпадёт с SA-20).
+- Типы юнитов брать из `units.json` (`types[]`), названия ЗРК — из `status.json` (`strong[].name`).
+- Сверять с подсказками сайта: `UNITSYM` в `map.html`.
+
+### 4. Сайт изменил формат или адреса
+- Скачать страницу (`map.html`, `assets/sarmat.js`) и найти `grab(`, `DATA =`, `BASE =`
+  (данные лежат в `DATA + name` относительно страницы; Кавказ — с префиксом `/k`).
+- Обновить `CONFIG.SITE`/`DATA_PATH` и разбор в `collect()`; обновить фикстуры одним запросом.
+
+### 5. Отладка в игре
+- Лог: `Saved Games\DCS.openbeta\Logs\dcs.log`, искать `SARMAT.DTC`.
+- Кэш: `Scripts\SarmatDTC\cache\` (`done.flag` = `ok`/`fail`). Ручная проверка загрузки:
+  `wscript //B //Nologo Scripts\SarmatDTC\fetch.vbs https://baikalprimestudio.com/data/`.
+- После записи в чат приходит локальное сообщение `SarmatDTC: DTC updated ...` (`CONFIG.SHOW_CHAT`).
+
+## Соглашения
+
+- Код и комментарии на английском, общение с владельцем на русском.
+- Отступ 4 пробела, `local` везде, плотность комментариев — как в существующем коде.
+- Все вызовы API DCS в `SarmatDTC.lua` оборачивать в `pcall`: ошибка в хуке не должна ломать GUI игры.
+- Не коммитить сгенерированные `.dtc`, кэш и чужие файлы из `Saved Games`. Пушить только по просьбе владельца.
