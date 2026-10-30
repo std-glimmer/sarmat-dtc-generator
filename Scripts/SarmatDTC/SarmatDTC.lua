@@ -436,6 +436,7 @@ function callbacks.onPlayerChangeSlot(id)
 end
 
 function callbacks.onSimulationFrame()
+    if not state.active then return end
     if state.fetching and now() >= state.nextPoll then
         state.nextPoll = now() + 1
         pollFetch()
