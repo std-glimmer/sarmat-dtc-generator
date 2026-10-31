@@ -23,8 +23,10 @@ return {
 
     -- Per-aircraft overrides of the module options (see `options` in aircraft/<type>.lua)
     -- and of its outputs (`outputs` = { [output id] = { enabled = ..., dir = ..., file = ... } };
-    -- the native DCS cartridge has id "dcs-dtc").
+    -- the native DCS cartridge has id "dcs-dtc"). `variant` picks a fill algorithm from the
+    -- module's `variants` (default: its `variant`); other options here override the variant's.
     OPTIONS = {
+        -- ["AH-64D_BLK_II"] = { variant = "sortie" },
         -- ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15, SPAWN_WEIGHT = 0.5, ENEMY_FACTOR = 0.7 },
         -- ["AH-64D_BLK_II"] = { TGT = 50, AO_DEPTH_M = 0, CLUSTER_M = 0, OWN_FRONT_M = 0, OWN_AD = true }, -- whole map, every group
         -- ["F-16C_50"] = { THREATS = 15, MIN_RANGE = 6000 },          -- MIN_RANGE in metres

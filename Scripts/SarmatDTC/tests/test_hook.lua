@@ -199,7 +199,7 @@ check(logged('cartridges written for blue around Hatay'), 'spawn base not used f
 local blue = readAH64()
 
 print('-- base DTC from config.lua')
-check(logged('AH%-64D_BLK_II %+base'), 'AH-64 base DTC not used')
+check(logged('AH%-64D_BLK_II%[sortie%] %+base'), 'AH-64 base DTC not used')
 check(string.find(blue, '121.5', 1, true) and string.find(blue, '"W01"', 1, true), 'AH-64 base fields missing in the cartridge')
 check(logged('BASE_DTC for F%-16C_50 is a AH%-64D_BLK_II cartridge'), 'wrong base type not reported')
 check(logged('BASE_DTC for FA%-18C_hornet is the generated file itself'), 'own output as base not rejected')

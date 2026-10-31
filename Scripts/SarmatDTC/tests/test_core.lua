@@ -140,6 +140,96 @@ do
         "disabled native output must still feed the other outputs")
 end
 
+-- variants: preset options, own build, config precedence, unknown name
+do
+    local var = {
+        type = "VAR",
+        options = { N = 3, K = 1 },
+        build = function(s, lib, opt)
+            local d = lib.cartridge("VAR", s.env)
+            d.FRONT, d.ALGO, d.K, d.V = lib.simplify(s.front, opt.N), "main", opt.K, opt.variant
+            return d, { points = #d.FRONT }
+        end,
+        variant = "base",
+        variants = {
+            base  = {},
+            dense = { options = { N = 5, K = 2 } },
+            other = { options = { N = 2 }, build = function(s, lib, opt)
+                local d = lib.cartridge("VAR", s.env)
+                d.ALGO, d.N = "other", opt.N
+                return d, { n = opt.N }
+            end },
+        },
+        outputs = {
+            { id = "txt", format = "text", file = "VAR.txt",
+              build = function(s, lib, opt, built) return built["dcs-dtc"].ALGO end },
+        },
+    }
+    local function run(ov)
+        local out, errors = core.build(status, units, "blue", env, { var }, { VAR = ov })
+        return out[1] and out[1].content, out, errors
+    end
+    local c, out, errors = run({})
+    check(#errors == 0 and c.ALGO == "main" and #c.FRONT == 3 and c.V == "base", "variant: default")
+    check(out[1].variant == "base" and out[1].defaultVariant == true and out[2].content == "main", "variant: default flags")
+    c, out = run({ variant = "dense", K = 7 })
+    check(#c.FRONT == 5 and c.K == 7 and c.V == "dense", "variant: preset options / config precedence")
+    check(out[1].variant == "dense" and out[1].defaultVariant == false, "variant: non-default flag")
+    c, out = run({ variant = "other" })
+    check(c.ALGO == "other" and c.N == 2 and out[2].content == "other", "variant: own build feeds outputs")
+    c, out, errors = run({ variant = "nope" })
+    check(c.ALGO == "main" and out[1].variant == "base", "variant: unknown name must fall back to default")
+    check(#errors == 1 and string.find(errors[1], "unknown variant 'nope'", 1, true), "variant: unknown name not reported")
+    local _, errs = core.build(status, units, "blue", env, { mods["F-16C_50"] }, { ["F-16C_50"] = { variant = "x" } })
+    check(#errs == 1 and string.find(errs[1], "has no variants", 1, true), "variant on a module without variants")
+end
+
+-- every variant of every module builds a valid native cartridge
+for _, mod in ipairs(modules) do
+    for name in pairs(mod.variants or {}) do
+        local label = mod.type .. "[" .. name .. "]"
+        local out, errors = core.build(status, units, "blue", env, { mod }, { [mod.type] = { variant = name } })
+        check(#errors == 0, label .. ": " .. table.concat(errors, "; "))
+        for _, o in ipairs(out) do
+            check(o.variant == name, label .. ": variant not reported")
+            for k, v in pairs(o.stats) do check(type(v) == "number", label .. " stat " .. k .. " is not a number") end
+            if o.format == "dcs-dtc" then
+                check(o.content.type == mod.type and o.content.terrain == "Syria"
+                    and o.content.name == core.CARTRIDGE_NAME, label .. ": header")
+                check(pcall(JSON.encode, JSON, o.content), label .. " not serializable")
+            end
+        end
+    end
+end
+
+-- module validation: variants
+do
+    local tmp = os.getenv("TEMP") .. "\\"
+    local bad = {
+        ['variant = "x", variants = { y = {} }'] = "missing default variant",
+        ['variants = { y = {} }'] = "variants without default",
+        ['variant = "y", variants = { y = { options = 1 } }'] = "variant options not a table",
+    }
+    for body, what in pairs(bad) do
+        local name = "sdtc_badvar_" .. os.time() .. ".lua"
+        local f = assert(io.open(tmp .. name, "wb"))
+        f:write('return { type = "X", build = function() return {} end, ' .. body .. ' }')
+        f:close()
+        local ok, errs = core.loadAircraft(tmp, { name })
+        os.remove(tmp .. name)
+        check(#ok == 0 and #errs == 1, "must be rejected: " .. what)
+    end
+    -- outputs-only module: one variant with a native build and one without is inconsistent
+    local name = "sdtc_badvar_" .. os.time() .. ".lua"
+    local f = assert(io.open(tmp .. name, "wb"))
+    f:write('return { type = "X", outputs = { { id = "o", file = "o", build = function() end } }, '
+        .. 'variant = "a", variants = { a = {}, b = { build = function() return {} end } } }')
+    f:close()
+    local ok, errs = core.loadAircraft(tmp, { name })
+    os.remove(tmp .. name)
+    check(#ok == 0 and #errs == 1, "must be rejected: variant native build in only some variants")
+end
+
 -- module validation: unique output ids, required fields
 do
     local tmp = os.getenv("TEMP") .. "\\"

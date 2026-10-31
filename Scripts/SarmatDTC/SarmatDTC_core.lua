@@ -16,7 +16,16 @@
 --     options = { POINTS = 25, ... },     -- defaults, overridable per type from config.lua OPTIONS
 --     build   = function(situation, lib, options) return data, stats end,  -- native DCS DTC, optional
 --     outputs = { <output>, ... },        -- optional files in other formats (other DTC systems)
+--     variant  = "sortie",                -- default variant, required with `variants`
+--     variants = {                        -- optional alternative fill algorithms / option presets
+--         sortie  = {},                                    -- module options and build as they are
+--         theater = { options = { TGT = 50 } },            -- preset: options over module options
+--         sead    = { options = {...}, build = function },  -- own algorithm for the native DTC
+--     },
 -- }
+-- config.lua OPTIONS[type].variant picks the variant (unknown name: error, default is used).
+-- Options merge: module options -> variant options -> config.lua OPTIONS[type]; `options.variant`
+-- holds the chosen name. Outputs are shared by all variants.
 -- <output> = {
 --     id      = "my-tool",                -- unique within the module
 --     format  = "json" | "text" | "lua" | "dcs-dtc",  -- serializer, see SarmatDTC.lua ENCODERS
@@ -463,6 +472,33 @@ local function merge(defaults, overrides)
     return out
 end
 
+-- Variants are valid when the default exists, each one is a table with optional options/build,
+-- and either no variant resolves a native build or every one does (module build or its own).
+local function validVariants(mod)
+    if mod.variants == nil then return mod.variant == nil end
+    if type(mod.variants) ~= "table" or type(mod.variant) ~= "string"
+        or type(mod.variants[mod.variant]) ~= "table" then
+        return false
+    end
+    local withBuild, without = 0, 0
+    for name, v in pairs(mod.variants) do
+        if type(name) ~= "string" or type(v) ~= "table" or (v.options ~= nil and type(v.options) ~= "table")
+            or (v.build ~= nil and type(v.build) ~= "function") then
+            return false
+        end
+        if v.build or mod.build then withBuild = withBuild + 1 else without = without + 1 end
+    end
+    return withBuild == 0 or without == 0
+end
+
+local function hasNative(mod)
+    if type(mod.build) == "function" then return true end
+    for _, v in pairs(type(mod.variants) == "table" and mod.variants or {}) do
+        if type(v) == "table" and type(v.build) == "function" then return true end
+    end
+    return false
+end
+
 -- Loads aircraft modules from `dir` (with trailing separator); `files` = list of file names.
 -- Files starting with "_" (templates) are skipped. Returns modules sorted by file name, errors.
 function M.loadAircraft(dir, files)
@@ -474,9 +510,9 @@ function M.loadAircraft(dir, files)
     for _, f in ipairs(names) do
         local ok, mod = pcall(dofile, dir .. f)
         local valid = ok and type(mod) == "table" and type(mod.type) == "string"
-            and (type(mod.build) == "function" or type(mod.outputs) == "table")
+            and (hasNative(mod) or type(mod.outputs) == "table") and validVariants(mod)
         if valid then
-            local ids = { [M.NATIVE_OUTPUT] = mod.build ~= nil }
+            local ids = { [M.NATIVE_OUTPUT] = hasNative(mod) }
             for _, o in ipairs(mod.outputs or {}) do
                 if type(o.id) ~= "string" or type(o.build) ~= "function" or type(o.file) ~= "string" or ids[o.id] then
                     valid = false
@@ -490,6 +526,7 @@ function M.loadAircraft(dir, files)
         else
             errors[#errors + 1] = f .. ": " .. (ok and
                 "must return { type = ..., build = function and/or outputs = { {id, file, build}, ... } } with unique output ids"
+                .. " (and variant = <default> with variants = { name = { options?, build? } })"
                 or tostring(mod))
         end
     end
@@ -575,12 +612,25 @@ function M.selectModules(modules, list)
     return selected, missing
 end
 
--- Output list of a module with the native DCS DTC output (from `build`) first.
-function M.outputsOf(mod)
+-- Variant of a module by name (config.lua OPTIONS[type].variant), nil name = default.
+-- Returns name, variant table (nil for a module without variants), error string for an unknown name.
+function M.variantOf(mod, name)
+    if mod.variants == nil then
+        return nil, nil, name ~= nil and ("has no variants, '" .. tostring(name) .. "' ignored") or nil
+    end
+    if name == nil or name == mod.variant then return mod.variant, mod.variants[mod.variant] end
+    if type(mod.variants[name]) == "table" then return name, mod.variants[name] end
+    return mod.variant, mod.variants[mod.variant],
+        "unknown variant '" .. tostring(name) .. "', using '" .. mod.variant .. "'"
+end
+
+-- Output list of a module with the native DCS DTC output (variant build or module `build`) first.
+function M.outputsOf(mod, variant)
     local list = {}
-    if mod.build then
+    local build = variant and variant.build or mod.build
+    if build then
         list[1] = { id = M.NATIVE_OUTPUT, format = "dcs-dtc", dir = "DTC", file = M.FILE_PREFIX .. "{type}.dtc",
-            build = function(s, lib, opt) return mod.build(s, lib, opt) end }
+            build = function(s, lib, opt) return build(s, lib, opt) end }
     end
     for _, o in ipairs(mod.outputs or {}) do list[#list + 1] = o end
     return list
@@ -591,10 +641,12 @@ local function expand(s, vars)
 end
 
 -- Runs every module over the situation. `overrides[type]` merges into module options
--- (`enabled = false` skips the module); `overrides[type].outputs[id]` merges into an output
--- (`enabled`, `dir`, `file`). `bases[type]` = base cartridge data (config.lua BASE_DTC) that the
+-- (`enabled = false` skips the module, `variant` picks a variant whose options go in between);
+-- `overrides[type].outputs[id]` merges into an output (`enabled`, `dir`, `file`).
+-- `bases[type]` = base cartridge data (config.lua BASE_DTC) that the
 -- native cartridge is laid over (M.applyBase). A failing module or output does not stop the others.
--- Returns list of { type, id, format, dir, file, content, stats, base, dropped }, list of error strings.
+-- Returns list of { type, id, format, dir, file, content, stats, base, dropped, variant,
+-- defaultVariant }, list of error strings.
 -- An extra output whose build returns nil is listed as { type, id, skip = true, stats } (nothing to write).
 function M.build(status, units, mySide, env, modules, overrides, bases)
     local situation = M.situation(status, units, mySide)
@@ -603,12 +655,14 @@ function M.build(status, units, mySide, env, modules, overrides, bases)
     local out, errors = {}, {}
     for _, mod in ipairs(modules) do
         local ov = overrides and overrides[mod.type] or {}
-        local opt = merge(mod.options, ov)
-        opt.outputs = nil
+        local vname, variant, verr = M.variantOf(mod, ov.variant)
+        local opt = merge(merge(mod.options, variant and variant.options), ov)
+        opt.outputs, opt.variant = nil, vname
         if opt.enabled ~= false then
+            if verr then errors[#errors + 1] = mod.type .. ": " .. verr end
             local vars = { type = mod.type, side = situation.side, terrain = tostring(env.terrain or "") }
             local built = {}
-            for _, o in ipairs(M.outputsOf(mod)) do
+            for _, o in ipairs(M.outputsOf(mod, variant)) do
                 local o2 = merge(o, ov.outputs and ov.outputs[o.id])
                 -- the native cartridge is always built (other outputs may reuse it), written only if enabled
                 if o2.enabled ~= false or o2.id == M.NATIVE_OUTPUT then
@@ -620,7 +674,8 @@ function M.build(status, units, mySide, env, modules, overrides, bases)
                     if ok and content == nil and o2.id ~= M.NATIVE_OUTPUT then
                         -- output prepared its data but has nothing to write (e.g. format not known yet)
                         if o2.enabled ~= false then
-                            out[#out + 1] = { type = mod.type, id = o2.id, skip = true, stats = stats or {} }
+                            out[#out + 1] = { type = mod.type, id = o2.id, skip = true, stats = stats or {},
+                                variant = vname, defaultVariant = vname == mod.variant }
                         end
                     elseif ok and content ~= nil then
                         if o2.format == "dcs-dtc" and type(content) == "table" then content.type = mod.type end
@@ -629,7 +684,8 @@ function M.build(status, units, mySide, env, modules, overrides, bases)
                             out[#out + 1] = { type = mod.type, id = o2.id, format = o2.format or "json",
                                 dir = expand(o2.dir or "DTC", vars), file = expand(o2.file, vars),
                                 content = content, stats = stats or {},
-                                base = dropped ~= nil, dropped = dropped }
+                                base = dropped ~= nil, dropped = dropped,
+                                variant = vname, defaultVariant = vname == mod.variant }
                         end
                     else
                         errors[#errors + 1] = mod.type .. "/" .. o2.id .. ": " .. tostring(ok and "no content" or content)

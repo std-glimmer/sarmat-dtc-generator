@@ -25,11 +25,24 @@
 -- dir: relative to Saved Games\DCS.openbeta, absolute, or with %ENV% variables;
 -- dir/file placeholders: {type} {side} {terrain}. Users override `enabled`/`dir`/`file`
 -- in config.lua OPTIONS[type].outputs[id]. A module may have only `outputs` and no `build`.
+--
+-- Variants (optional): alternative fill algorithms or option presets, one is chosen in
+-- config.lua OPTIONS[type].variant (unknown name: error in the log, `variant` default is used).
+-- A variant's `options` go over the module options, config.lua OPTIONS over both; its `build`
+-- replaces the module `build` for the native cartridge. `opt.variant` = chosen name.
+-- Outputs are shared by all variants. Without `variants` there is no `variant` field.
 
 return {
     type = "MyAircraft_DTC_type",
     options = {
         POINTS = 10,            -- overridable from config.lua OPTIONS["MyAircraft_DTC_type"]
+    },
+
+    variant  = "default",
+    variants = {
+        default = {},                                   -- module options and build
+        dense   = { options = { POINTS = 20 } },        -- preset of the same build
+        -- other = { options = { ... }, build = function(s, lib, opt) ... end },  -- own algorithm
     },
 
     build = function(s, lib, opt)

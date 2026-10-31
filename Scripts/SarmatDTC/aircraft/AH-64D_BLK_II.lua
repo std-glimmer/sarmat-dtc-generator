@@ -101,6 +101,13 @@ return {
         RING_CAP_M   = 15000, -- [m] threat ring counted for TGT priority (radar horizon of a low helicopter)
     },
 
+    -- config.lua OPTIONS["AH-64D_BLK_II"] = { variant = "..." }; a variant without its own build
+    -- uses the build below with its options, e.g. theater = { options = { TGT = 50, AO_DEPTH_M = 0 } }
+    variant  = "sortie",
+    variants = {
+        sortie = {},        -- TSD picture for one sortie (header comment)
+    },
+
     build = function(s, lib, opt)
         local env, up, dist = s.env, lib.asciiUpper, lib.dist
         local function frontDist(p) return lib.distToPolyline(p.x, p.z, s.front) end

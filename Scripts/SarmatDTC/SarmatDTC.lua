@@ -303,8 +303,9 @@ local function generate()
         return '(' .. table.concat(parts, ' ') .. ')'
     end
     for _, f in ipairs(files) do
+        local vtag = f.variant and ('[' .. f.variant .. ']') or ''
         if f.skip then
-            summary[#summary + 1] = f.type .. '/' .. f.id .. ' not written ' .. statsText(f.stats)
+            summary[#summary + 1] = f.type .. vtag .. '/' .. f.id .. ' not written ' .. statsText(f.stats)
         else
             local encode = ENCODERS[f.format]
             local okE, text = false, 'unknown format ' .. tostring(f.format)
@@ -317,7 +318,7 @@ local function generate()
                 okW, err = writeFileAtomic(path, text)
             end
             if okW then
-                local label = f.type .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
+                local label = f.type .. vtag .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
                 if f.base then
                     label = label .. ' +base'
                     if #f.dropped > 0 then
@@ -325,7 +326,8 @@ local function generate()
                     end
                 end
                 summary[#summary + 1] = label .. ' ' .. statsText(f.stats)
-                local short = string.match(f.type, '^([^_]+)') or f.type
+                local short = (string.match(f.type, '^([^_]+)') or f.type)
+                    .. (f.defaultVariant == false and vtag or '')   -- non-default variant only
                 if not seen[short] then
                     seen[short] = true
                     written[#written + 1] = short
