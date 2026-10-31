@@ -4,6 +4,7 @@
 -- (same shape, only what you change); it is never shipped, so updates keep it:
 --     return {
 --         AIRCRAFT = { "AH-64D_BLK_II", "F-16C_50" },                   -- replaces the list below
+--         DTC_DIR  = "DTC\\SARMAT",                                      -- replaces the folder below
 --         BASE_DTC = { ["AH-64D_BLK_II"] = "AH-64D_BLK_II_DTC_SAR_3.dtc" },
 --         OPTIONS  = { ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15 } },     -- replaces the entry per aircraft
 --     }
@@ -17,6 +18,12 @@ return {
         "F-14BU",
         "F-15ESE",          -- example: prepares data only, writes no file yet (format not decided)
     },
+
+    -- Folder of the generated SARMAT_<type>.dtc: relative to Saved Games\DCS.openbeta, absolute
+    -- ("D:\\DCS DTC", "\\\\server\\share") or with %ENV% variables; created if missing.
+    -- In DCS, Import in the DTC manager opens Saved Games\...\DTC: browse to this folder there.
+    -- OPTIONS[type].outputs["dcs-dtc"].dir overrides it for one aircraft.
+    DTC_DIR = "DTC",
 
     -- Base DCS cartridge per aircraft (DCS native .dtc only): every field the script does not fill
     -- (radios, CMDS, laser codes, waypoints, ...) is taken from it. File name in

@@ -682,13 +682,14 @@ function M.variantOf(mod, name)
 end
 
 -- Output list of a module with the native DCS DTC output (variant build or module `build`) first;
--- its file is <prefix>{type}.dtc (default M.FILE_PREFIX).
-function M.outputsOf(mod, variant, prefix)
+-- its file is <native.dir>\<native.prefix>{type}.dtc (default "DTC" and M.FILE_PREFIX).
+function M.outputsOf(mod, variant, native)
+    native = native or {}
     local list = {}
     local build = variant and variant.build or mod.build
     if build then
-        list[1] = { id = M.NATIVE_OUTPUT, format = "dcs-dtc", dir = "DTC",
-            file = (prefix or M.FILE_PREFIX) .. "{type}.dtc",
+        list[1] = { id = M.NATIVE_OUTPUT, format = "dcs-dtc", dir = native.dir or "DTC",
+            file = (native.prefix or M.FILE_PREFIX) .. "{type}.dtc",
             build = function(s, lib, opt) return build(s, lib, opt) end }
     end
     for _, o in ipairs(mod.outputs or {}) do list[#list + 1] = o end
@@ -730,13 +731,15 @@ end
 -- (`enabled = false` skips the module, `variant` picks a variant whose options go in between);
 -- `overrides[type].outputs[id]` merges into an output (`enabled`, `dir`, `file`).
 -- `bases[type]` = base cartridge data (config.lua BASE_DTC) that the
--- native cartridge is laid over (M.applyBase). `prefix` = native file name prefix (default M.FILE_PREFIX).
+-- native cartridge is laid over (M.applyBase). `native` = { dir, prefix }: folder (config.lua DTC_DIR,
+-- default "DTC") and file name prefix (default M.FILE_PREFIX) of the native cartridge;
+-- overrides[type].outputs["dcs-dtc"] still wins over them.
 -- A failing module or output does not stop the others.
 -- Returns list of { type, id, format, dir, file, content, stats, base, dropped, variant,
 -- defaultVariant }, list of error strings, list of warnings for dcs.log (options fixed by the
 -- module `limits`, malformed map records skipped).
 -- An extra output whose build returns nil is listed as { type, id, skip = true, stats } (nothing to write).
-function M.build(status, units, mySide, env, modules, overrides, bases, prefix)
+function M.build(status, units, mySide, env, modules, overrides, bases, native)
     local situation = M.situation(status, units, mySide)
     situation.env = env
     if env.spawn and env.spawn.x and env.spawn.z then situation.spawn = env.spawn end
@@ -758,7 +761,7 @@ function M.build(status, units, mySide, env, modules, overrides, bases, prefix)
             local run = { situation = situation, opt = opt, built = {}, base = bases and bases[mod.type],
                 terrain = env.terrain, variant = vname,
                 vars = { type = mod.type, side = situation.side, terrain = tostring(env.terrain or "") } }
-            for _, o in ipairs(M.outputsOf(mod, variant, prefix)) do
+            for _, o in ipairs(M.outputsOf(mod, variant, native)) do
                 local o2 = merge(o, ov.outputs and ov.outputs[o.id])
                 -- the native cartridge is always built (other outputs may reuse it), written only if enabled
                 if o2.enabled ~= false or o2.id == M.NATIVE_OUTPUT then

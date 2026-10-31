@@ -147,6 +147,12 @@ do
     out = core.build(status, units, "red", env, { multi }, { MULTI = { outputs = { ["dcs-dtc"] = { enabled = false } } } })
     check(#out == 1 and out[1].id == "txt" and out[1].content == "points=3",
         "disabled native output must still feed the other outputs")
+    -- native folder and prefix (config.lua DTC_DIR); a per-type output override still wins
+    out = core.build(status, units, "red", env, { multi }, {}, nil, { dir = "D:\\Carts\\{side}", prefix = "X_" })
+    check(out[1].dir == "D:\\Carts\\red" and out[1].file == "X_MULTI.dtc", "native folder/prefix: " .. out[1].dir)
+    out = core.build(status, units, "red", env, { multi }, { MULTI = { outputs = { ["dcs-dtc"] = { dir = "Own" } } } },
+        nil, { dir = "D:\\Carts" })
+    check(out[1].dir == "Own", "per-type native dir must override DTC_DIR")
 end
 
 -- variants: preset options, own build, config precedence, unknown name

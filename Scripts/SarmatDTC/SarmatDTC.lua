@@ -24,7 +24,7 @@ local CONFIG = {
 -- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua,
 -- user changes in config.user.lua (see readConfig)
 
-local VERSION   = '1.0.1'          -- in dcs.log: which version a player runs
+local VERSION   = '1.1.0'          -- in dcs.log: which version a player runs
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
@@ -71,6 +71,15 @@ local function readConfig()
         end
     end
     if type(user.AIRCRAFT) == 'table' then merged.AIRCRAFT = user.AIRCRAFT end
+    for _, src in ipairs({ cfg, user }) do
+        if src.DTC_DIR ~= nil then
+            if type(src.DTC_DIR) == 'string' and string.match(src.DTC_DIR, '%S') then
+                merged.DTC_DIR = src.DTC_DIR
+            else
+                warn('DTC_DIR must be a folder path, got ' .. tostring(src.DTC_DIR) .. ', ignored')
+            end
+        end
+    end
     for _, section in ipairs({ 'OPTIONS', 'BASE_DTC' }) do
         for _, src in ipairs({ cfg[section], user[section] }) do
             for k, v in pairs(type(src) == 'table' and src or {}) do merged[section][k] = v end
@@ -99,6 +108,7 @@ local function loadSettings()
     local types = {}
     for i, m in ipairs(aircraft) do types[i] = m.type end
     info('aircraft modules: ' .. table.concat(types, ', '))
+    if settings.DTC_DIR then info('cartridge folder (DTC_DIR): ' .. settings.DTC_DIR) end
 end
 loadSettings()
 
@@ -225,6 +235,7 @@ local function writeDiagnostics(dir, path)
 end
 
 -- config.lua BASE_DTC: { [type] = file name in Saved Games\DCS.openbeta\DTC or absolute path }.
+-- The DCS DTC editor saves there, so a DTC_DIR elsewhere does not move the base files.
 -- Decoded files are cached by path and modification time.
 local baseCache = {}
 
@@ -235,7 +246,7 @@ local function loadBases()
         if not (string.match(path, '^%a:\\') or string.match(path, '^\\\\')) then
             path = lfs.writedir() .. 'DTC\\' .. path
         end
-        local own = lfs.writedir() .. 'DTC\\' .. CONFIG.FILE_PREFIX .. unitType .. '.dtc'
+        local own = resolveDir(settings.DTC_DIR) .. CONFIG.FILE_PREFIX .. unitType .. '.dtc'
         local stamp = lfs.attributes(path, 'modification')
         if string.lower(path) == string.lower(own) then
             warn('BASE_DTC for ' .. unitType .. ' is the generated file itself, ignored')
@@ -512,7 +523,7 @@ local function generate(final, problem)
         spawn     = state.spawn,
     }
     local okBuild, files, errors, warnings = pcall(core.build, data.status, data.units, state.side, env, aircraft,
-        settings.OPTIONS, bases, CONFIG.FILE_PREFIX)
+        settings.OPTIONS, bases, { dir = settings.DTC_DIR, prefix = CONFIG.FILE_PREFIX })
     if not okBuild then
         warn('build failed: ' .. tostring(files))
         return fail('build failed, see dcs.log')

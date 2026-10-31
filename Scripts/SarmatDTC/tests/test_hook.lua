@@ -386,6 +386,31 @@ check(logged('^  folder directory.*, file directory.*, %.tmp missing, %.bak miss
     'failed write diagnostics not logged')
 os.execute('rmdir "' .. ah64Path .. '"')
 
+print('-- DTC_DIR in config.user.lua moves the cartridges (new folder is created)')
+local ownDir = dtcDir .. 'Свои\\'
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { DTC_DIR = "DTC\\Свои", BASE_DTC = { ["F-14BU"] = "missing.dtc" } }
+]])
+from = #logs
+cb.onMissionLoadEnd()
+check(frames(30), 'download did not finish')
+mySideNum, mySlot = 2, '101'
+cb.onPlayerChangeSlot(7)
+check(logged('^cartridge folder %(DTC_DIR%): DTC\\Свои$', from), 'DTC_DIR not logged')
+for _, t in ipairs(types) do
+    check(exists(ownDir .. 'SARMAT_' .. t .. '.dtc'), 'not written to DTC_DIR: ' .. t)
+end
+check(exists(writedir .. 'Exports\\blue\\ZZ_TEST.txt'), 'DTC_DIR must not move the extra outputs')
+for _, t in ipairs(types) do os.remove(ownDir .. 'SARMAT_' .. t .. '.dtc') end
+os.execute('rmdir "' .. string.gsub(ownDir, '\\$', '') .. '"')
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { DTC_DIR = 5, BASE_DTC = { ["F-14BU"] = "missing.dtc" } }
+]])
+from = #logs
+cb.onMissionLoadEnd()
+check(frames(30), 'download did not finish')
+check(logged('^DTC_DIR must be a folder path, got 5, ignored', from), 'bad DTC_DIR not reported')
+
 print('-- no temporary files left next to the cartridges')
 for _, f in ipairs(listDir(dtcDir)) do
     check(not string.match(f, '%.tmp$') and not string.match(f, '%.bak$'), 'left over: ' .. f)
