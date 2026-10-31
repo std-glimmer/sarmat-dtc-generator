@@ -15,7 +15,9 @@ local CONFIG = {
     DATA_PATH     = { Syria = "data/", Caucasus = "k/data/" },
     FILE_PREFIX   = "SARMAT_",
     REFETCH_SEC   = 60,            -- reuse downloaded data if younger than this
-    FETCH_TIMEOUT = 150,
+    FETCH_TIMEOUT = 240,           -- above fetch.cmd's worst case (~200 s), or runs could overlap
+    STALE_SEC     = 600,           -- cached map data older than this: its age is shown in the chat
+    MAX_AGE_SEC   = 3 * 3600,      -- cached map data older than this is not used
     SHOW_CHAT     = true,          -- local-only chat notification after writing cartridges
     LOG_SLOT      = true,          -- write own slot details (group, start airbase/FARP, position) to dcs.log
 }
@@ -72,6 +74,7 @@ local function resetState()
         theatre    = nil,
         side       = nil,     -- "red" / "blue" of own slot
         fetching   = false,
+        fetchId    = nil,     -- id of the running download, its result is cache/done-<id>.flag
         fetchStart = 0,
         fetchedAt  = nil,     -- real time of last successful download
         nextPoll   = 0,
@@ -123,14 +126,28 @@ local ENCODERS = {
     text = function(content) return tostring(content) end,
 }
 
+-- Writes via path.tmp; the previous file is moved aside first and put back if the new one
+-- cannot take its place (e.g. the file is locked), so a failed write never loses it.
 local function writeFileAtomic(path, content)
-    local tmp = path .. '.tmp'
+    local tmp, bak = path .. '.tmp', path .. '.bak'
     local f, err = io.open(tmp, 'wb')
     if not f then return false, err end
-    f:write(content)
-    f:close()
-    os.remove(path)
-    return os.rename(tmp, path)
+    local okW, errW = f:write(content)
+    local okC, errC = f:close()
+    if not (okW and okC) then
+        os.remove(tmp)
+        return false, errW or errC
+    end
+    os.remove(bak)
+    local moved = fileExists(path) and os.rename(path, bak)
+    local ok, errR = os.rename(tmp, path)
+    if not ok then
+        if moved then os.rename(bak, path) end
+        os.remove(tmp)
+        return false, errR
+    end
+    if moved then os.remove(bak) end
+    return true
 end
 
 -- config.lua BASE_DTC: { [type] = file name in Saved Games\DCS.openbeta\DTC or absolute path }.
@@ -261,21 +278,44 @@ end
 -- cartridge generation
 ------------------------------------------------------------------------------
 
-local function generate()
+-- Age of the cached map data [s] by the file time of cache/status.json, nil without cache.
+local function cacheAge()
+    local t = lfs.attributes(CACHE_DIR .. '\\status.json', 'modification')
+    return t and math.max(0, os.time() - t) or nil
+end
+
+local function ageText(sec)
+    if sec < 5400 then return math.floor(sec / 60 + 0.5) .. ' min' end
+    return math.floor(sec / 3600 + 0.5) .. ' h'
+end
+
+-- final: no download follows this attempt, so the player is told when nothing is written
+-- (an attempt from the old cache before a download stays silent). problem: why the data
+-- may be outdated ("download failed"), shown in the chat.
+local function generate(final, problem)
     if not (state.active and state.side) then return end
+    local function fail(msg)
+        if not final then
+            info(msg .. ', waiting for the download')
+            return
+        end
+        warn(msg)
+        chat('SarmatDTC: ' .. (problem and (problem .. ', ') or '') .. msg .. ', no DTC written')
+    end
+
+    local age = cacheAge()
     local statusTxt = readFile(CACHE_DIR .. '\\status.json')
     local unitsTxt  = readFile(CACHE_DIR .. '\\units.json')
-    if not (statusTxt and unitsTxt) then return end
+    if not (statusTxt and unitsTxt) then return fail('no map data') end
+    if age and age > CONFIG.MAX_AGE_SEC then return fail('map data too old (' .. ageText(age) .. ')') end
 
     local ok, status = pcall(JSON.decode, JSON, statusTxt)
     local ok2, units = pcall(JSON.decode, JSON, unitsTxt)
     if not (ok and ok2 and type(status) == 'table' and type(units) == 'table') then
-        warn('cannot parse downloaded map data')
-        return
+        return fail('cannot parse map data')
     end
     if status.theatre and status.theatre ~= state.theatre then
-        warn('map data is for ' .. tostring(status.theatre) .. ', mission terrain is ' .. tostring(state.theatre))
-        return
+        return fail('map data is for ' .. tostring(status.theatre) .. ', mission map is ' .. tostring(state.theatre))
     end
 
     local t = getTerrain()
@@ -289,7 +329,7 @@ local function generate()
         loadBases())
     if not okBuild then
         warn('build failed: ' .. tostring(files))
-        return
+        return fail('build failed, see dcs.log')
     end
     for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
     local failed = #errors
@@ -338,13 +378,19 @@ local function generate()
             end
         end
     end
+    local old = age and age > CONFIG.STALE_SEC and ('map data ' .. ageText(age) .. ' old') or nil
     local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
-    info('cartridges written for ' .. state.side .. around .. ': ' .. table.concat(summary, ', '))
+    info('cartridges written for ' .. state.side .. around .. (old and (', ' .. old) or '') .. ': '
+        .. table.concat(summary, ', '))
     -- short chat line, details are in dcs.log
     local where = state.spawn and state.spawn.name and (' (' .. state.spawn.name .. ')') or ''
     local msg = 'SarmatDTC: ' .. string.upper(state.side) .. ' DTC ready' .. where .. ': '
         .. (#written > 0 and table.concat(written, ', ') or 'none')
-    if failed > 0 then msg = msg .. ' - ' .. failed .. ' error(s), see dcs.log' end
+    local notes = {}
+    notes[#notes + 1] = problem
+    notes[#notes + 1] = old
+    if failed > 0 then notes[#notes + 1] = failed .. ' error(s), see dcs.log' end
+    if #notes > 0 then msg = msg .. ' - ' .. table.concat(notes, ', ') end
     chat(msg)
 end
 
@@ -352,22 +398,40 @@ end
 -- background download
 ------------------------------------------------------------------------------
 
+local fetchSeq = 0   -- not reset with the state: ids stay unique for the whole DCS session
+
+local function flagPath(id)
+    return CACHE_DIR .. '\\done-' .. id .. '.flag'
+end
+
+-- Result flags of earlier fetches (and done.flag of old versions) are removed before a new one.
+local function removeFlags()
+    pcall(function()
+        for f in lfs.dir(CACHE_DIR) do
+            if string.match(f, '^done.*%.flag$') then os.remove(CACHE_DIR .. '\\' .. f) end
+        end
+    end)
+end
+
 local function startFetch()
     if state.fetching then return end
     if state.fetchedAt and now() - state.fetchedAt < CONFIG.REFETCH_SEC then
-        generate()
+        generate(true)
         return
     end
     local path = CONFIG.DATA_PATH[state.theatre or '']
     if not path then
         warn('no SARMAT map data for terrain ' .. tostring(state.theatre))
+        if state.side then chat('SarmatDTC: no SARMAT map data for terrain ' .. tostring(state.theatre)) end
         return
     end
     lfs.mkdir(CACHE_DIR)
-    os.remove(CACHE_DIR .. '\\done.flag')
+    removeFlags()
+    fetchSeq = fetchSeq + 1
+    local id = os.time() .. '-' .. fetchSeq
     -- fetch.vbs starts fetch.cmd (curl.exe) in a hidden window and returns at once; it writes
     -- into CACHE_DIR. DCS's os.execute silently drops commands longer than ~256 chars.
-    local cmd = string.format('wscript.exe //B //Nologo "%sfetch.vbs" "%s"', BASE_DIR, CONFIG.SITE .. path)
+    local cmd = string.format('wscript.exe //B //Nologo "%sfetch.vbs" "%s" %s', BASE_DIR, CONFIG.SITE .. path, id)
     if #cmd > 250 then warn('download command may be too long for os.execute (' .. #cmd .. ' chars)') end
     local ok, err = pcall(os.execute, cmd)
     if not ok then
@@ -375,27 +439,30 @@ local function startFetch()
         return
     end
     state.fetching = true
+    state.fetchId = id
     state.fetchStart = now()
     info('downloading ' .. CONFIG.SITE .. path)
 end
 
 local function pollFetch()
     if not state.fetching then return end
-    local flag = CACHE_DIR .. '\\done.flag'
+    local flag = flagPath(state.fetchId)
     if fileExists(flag) then
         state.fetching = false
         local result = readFile(flag) or ''
+        os.remove(flag)
         if string.find(result, 'ok') then
             state.fetchedAt = now()
             info('map data downloaded')
-            generate()
+            generate(true)
         else
             warn('download failed, using previous data if any')
-            generate()
+            generate(true, 'download failed')
         end
     elseif now() - state.fetchStart > CONFIG.FETCH_TIMEOUT then
         state.fetching = false
-        warn('download timed out')
+        warn('download timed out, using previous data if any')
+        generate(true, 'download timed out')
     end
 end
 
@@ -432,7 +499,7 @@ function callbacks.onPlayerChangeSlot(id)
     state.spawn = (ok and slot.x and slot.z) and { x = slot.x, z = slot.z, name = slot.base } or nil
     if ok and CONFIG.LOG_SLOT then logSlot(side, slot) end
     if not (state.fetchedAt and now() - state.fetchedAt < CONFIG.REFETCH_SEC) then
-        generate()                -- right away from the older cache, fresh data follows
+        generate(false)           -- right away from the older cache, fresh data follows
     end
     startFetch()                  -- fresh data: generates now; otherwise when the download is done
 end

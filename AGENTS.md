@@ -20,7 +20,7 @@
 | `Scripts/SarmatDTC/aircraft/<type>.lua` | **Один файл на модуль DCS**: переводит обстановку в DTC этого модуля, держит его символы и лимиты. Подхватывается автоматически |
 | `Scripts/SarmatDTC/aircraft/_template.lua` | Шаблон модуля с описанием API (файлы на `_` не загружаются) |
 | `Scripts/SarmatDTC/fetch.vbs` | Запускает `fetch.cmd` в скрытом окне и сразу возвращает управление |
-| `Scripts/SarmatDTC/fetch.cmd` | `curl.exe` → `cache/status.json`, `cache/units.json`, затем `cache/done.flag` (`ok`/`fail`) |
+| `Scripts/SarmatDTC/fetch.cmd` | `curl.exe` → `cache/status.json`, `cache/units.json`, затем `cache/done-<id>.flag` (`ok`/`fail`) |
 | `Scripts/SarmatDTC/tests/` | Офлайн-тесты и фикстуры (снимок данных карты, Сирия) |
 | `Scripts/SarmatDTC/cache/` | Кэш загрузки, генерируется во время работы, в git не попадает |
 
@@ -85,11 +85,23 @@ status.json + units.json ──core.situation()──► situation ──► air
 1. `onMissionLoadEnd`: `DCS.isMultiplayer()` и `net.get_server_settings().name` содержит `sarmat`
    (без учёта регистра) → `state.active`. Карта местности берётся из `Terrain.GetTerrainConfig('id')`.
    Сирия → `/data/`, Кавказ → `/k/data/`. Запускается фоновая загрузка.
-2. `onSimulationFrame`: раз в секунду проверяется `cache/done.flag`.
+2. `onSimulationFrame`: раз в секунду проверяется `cache/done-<id>.flag` своей загрузки. У каждой загрузки
+   свой id (`os.time()-<счётчик>`): `fetch.vbs` передаёт его в `fetch.cmd`, тот пишет `status-<id>.part`
+   и флаг с этим id. Поэтому поздно завершившийся старый процесс (например, после перезахода) не принимается
+   за текущую загрузку. Перед новой загрузкой старые `done*.flag` удаляются. `FETCH_TIMEOUT` (240 с) должен быть
+   больше худшего случая `fetch.cmd` (~200 с: попытка ≤ 40 с, повторы стартуют не позже 60 с, два файла).
 3. `onPlayerChangeSlot(id)` для своего id: сторона (`1`=red, `2`=blue; `0`, то есть зритель, игнорируется).
    Если кэшу больше `REFETCH_SEC`, DTC сразу генерируется из старого кэша, затем идёт перезагрузка,
    и после неё DTC генерируется ещё раз.
 4. Перед генерацией `status.theatre` сверяется с картой миссии: при несовпадении генерация пропускается.
+5. Возраст кэша определяется по времени файла `cache/status.json`. Кэш старше `MAX_AGE_SEC` (3 ч) не используется,
+   а для кэша старше `STALE_SEC` (10 мин) в чат добавляется `map data N min/h old`.
+6. `generate(final, problem)`: `final = false` — попытка из старого кэша перед загрузкой, её отказ пишется
+   только в лог. `final = true` — после загрузки (успешной, неудачной или по таймауту): если ничего не записано,
+   игрок получает в чат причину (`..., no DTC written`), а `problem` (`download failed`/`download timed out`)
+   добавляется к сообщению.
+7. Запись файла (`writeFileAtomic`): `.tmp`, затем старый файл переносится в `.bak`, затем `.tmp` ставится на его место.
+   Если замена не удалась (файл занят), старый возвращается: сбой записи не уничтожает прежний картридж.
 
 ## Данные сайта (публичный JSON, координаты уже в системе DCS)
 
@@ -222,7 +234,9 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
   через `wscript → fetch.cmd → curl` по `file://`. Временная папка лежит в коротком `%TEMP%\sdtc*`
   из-за лимита в 256 символов. Тест подкладывает свой `config.lua` (F-14 закомментирован, есть
   неизвестный тип) и модуль `ZZ_TEST` только с `outputs` (text/lua/json; относительный, абсолютный
-  и `%TEMP%` пути) и проверяет реально записанные файлы.
+  и `%TEMP%` пути) и проверяет реально записанные файлы. Режим загрузки переключается (`download`:
+  `ok`/`fail`/`none`), время файла кэша подменяется (`mtime`). Проверяются чужие флаги, возраст кэша в чате,
+  слишком старый кэш, кэш другой карты, таймаут и отсутствие `.tmp`/`.bak` рядом с картриджами.
 - Интерпретатор — `bin\luae.exe` из установки DCS (Lua 5.1), запускать с рабочей папкой в корне DCS.
 - В DCS реально не запускается: после изменений в колбэках просить пользователя проверить в игре
   (`Logs\dcs.log`, тег `SARMAT.DTC`).
@@ -267,11 +281,14 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
 
 ### 5. Отладка в игре
 - Лог: `Saved Games\DCS.openbeta\Logs\dcs.log`, искать `SARMAT.DTC`.
-- Кэш: `Scripts\SarmatDTC\cache\` (`done.flag` = `ok`/`fail`). Ручная проверка загрузки:
+- Кэш: `Scripts\SarmatDTC\cache\` (`done-<id>.flag` = `ok`/`fail`). Ручная проверка загрузки
+  (флаг — `done-manual.flag`):
   `wscript //B //Nologo Scripts\SarmatDTC\fetch.vbs https://baikalprimestudio.com/data/`.
 - После записи в чат приходит короткое локальное сообщение (`CONFIG.SHOW_CHAT`), например
   `SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C`: сторона, база спавна, записанные
-  типы (часть до `_`), а при сбоях — `N error(s), see dcs.log`. Подробная статистика есть только в `dcs.log`.
+  типы (часть до `_`). После ` - ` идут пометки: `download failed`/`download timed out`, `map data 2 h old`,
+  `N error(s), see dcs.log`. Если записать нечего, сообщение имеет вид
+  `SarmatDTC: download failed, map data too old (10 h), no DTC written`. Подробная статистика есть только в `dcs.log`.
 
 ## Порядок работы: сначала обсуждение, потом правки
 

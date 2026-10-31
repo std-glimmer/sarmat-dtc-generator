@@ -18,10 +18,15 @@ local function exists(p)
     return false
 end
 
+local mtime = {}   -- [path] = fake modification time (default: now)
 package.loaded['lfs'] = {
     writedir = function() return writedir end,
     mkdir = function(p) os.execute('mkdir "' .. p .. '" 2>nul') end,
-    attributes = function(p) return exists(p) and 'file' or nil end,
+    attributes = function(p, key)
+        if not exists(p) then return nil end
+        if key == 'modification' then return mtime[p] or os.time() end
+        return 'file'
+    end,
     dir = function(p)
         local files = {}
         local h = io.popen('dir /b "' .. p .. '"')
@@ -78,35 +83,47 @@ net = {
     end,
     recv_chat = function(msg) chats[#chats + 1] = msg end,
 }
+-- download: 'ok' (fixtures), 'fail' (missing file:// folder), 'none' (no process: never finishes)
+local download = 'ok'
 local realExecute = os.execute
 os.execute = function(cmd)
-    local patched = cmd:gsub('https://baikalprimestudio%.com/data/', (fileBase:gsub('%%', '%%%%')))
-    check(#patched <= 256, 'os.execute command longer than 256 chars (' .. #patched .. ')')
-    return realExecute(patched)
+    if string.find(cmd, 'fetch.vbs', 1, true) then
+        if download == 'none' then return 0 end
+        local base = download == 'fail' and (fileBase .. 'missing/') or fileBase
+        cmd = cmd:gsub('https://baikalprimestudio%.com/data/', (base:gsub('%%', '%%%%')))
+        check(#cmd <= 256, 'os.execute command longer than 256 chars (' .. #cmd .. ')')
+    end
+    return realExecute(cmd)
 end
 
-local cacheFlag = writedir .. 'Scripts\\SarmatDTC\\cache\\done.flag'
+local cacheDir = writedir .. 'Scripts\\SarmatDTC\\cache\\'
 local dtcDir = writedir .. 'DTC\\'
 local types = { 'AH-64D_BLK_II', 'F-16C_50', 'FA-18C_hornet' }   -- F-14BU is commented out in config.lua
 
+local function logged(pattern, from)
+    for i = (from or 0) + 1, #logs do if string.find(logs[i], pattern) then return true end end
+    return false
+end
+
+-- Runs simulation frames (1 s each) until the download started before reports its result.
 local function frames(seconds)
+    local from = #logs
     for _ = 1, seconds do
         clock = clock + 1
         DCS.cb.onSimulationFrame()
+        if logged('^map data downloaded', from) or logged('^download ', from) then return true end
         local t = os.time()
         while os.time() - t < 1 do end
-        if exists(cacheFlag) then
-            clock = clock + 1
-            DCS.cb.onSimulationFrame()
-            return true
-        end
     end
     return false
 end
 
-local function logged(pattern)
-    for _, l in ipairs(logs) do if string.find(l, pattern) then return true end end
-    return false
+local function listDir(dir)
+    local files = {}
+    local h = io.popen('dir /b "' .. dir .. '" 2>nul')
+    for line in h:lines() do files[#files + 1] = line end
+    h:close()
+    return files
 end
 
 local function readAH64()
@@ -173,9 +190,22 @@ mySideNum, mySlot = 2, '101'
 cb.onPlayerChangeSlot(7)
 check(#chats == 0 and not exists(dtcDir .. 'SARMAT_F-14BU.dtc'), 'acted on a non-SARMAT server')
 
-print('-- SARMAT server: download on mission load')
+print('-- result flags of other fetches are not taken for ours')
 server = '[RU] SARMAT | Syria PvP'
 mySideNum, mySlot = 0, ''
+os.execute('mkdir "' .. cacheDir .. '" 2>nul')
+writeFile(cacheDir .. 'done.flag', 'ok')
+writeFile(cacheDir .. 'done-1-1.flag', 'ok')
+download = 'none'
+cb.onMissionLoadEnd()
+clock = clock + 1
+cb.onSimulationFrame()
+check(not logged('map data downloaded'), 'took a flag of another fetch')
+check(not exists(cacheDir .. 'done.flag') and not exists(cacheDir .. 'done-1-1.flag'), 'old flags not removed')
+cb.onSimulationStop()
+
+print('-- SARMAT server: download on mission load')
+download = 'ok'
 cb.onMissionLoadEnd()
 check(frames(30), 'download did not finish')
 check(logged('map data downloaded'), 'download not reported as ok')
@@ -234,6 +264,62 @@ print('-- spectators: nothing happens')
 mySideNum, mySlot = 0, ''
 cb.onPlayerChangeSlot(7)
 check(#chats == 2, 'reacted to spectator slot')
+
+local statusPath = cacheDir .. 'status.json'
+local ah64Path = dtcDir .. 'SARMAT_AH-64D_BLK_II.dtc'
+-- own blue slot again after REFETCH_SEC: cartridges from the cache at once, then a download
+local function retake()
+    mySideNum, mySlot = 2, '101'
+    clock = clock + 120
+    local n = #chats
+    cb.onPlayerChangeSlot(7)
+    return n
+end
+
+print('-- download failed: old cache used, its age in the chat')
+mtime[statusPath] = os.time() - 2 * 3600
+download = 'fail'
+local n = retake()
+check(#chats == n + 1 and chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - map data 2 h old',
+    'stale cache chat: ' .. tostring(chats[#chats]))
+check(frames(30) and logged('^download failed'), 'failed download not reported')
+check(chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download failed, map data 2 h old',
+    'failed download chat: ' .. tostring(chats[#chats]))
+
+print('-- cache too old: nothing written, the player is told once no download follows')
+mtime[statusPath] = os.time() - 10 * 3600
+os.remove(ah64Path)
+n = retake()
+check(#chats == n, 'chat before the download finished: ' .. tostring(chats[#chats]))
+check(frames(30), 'download did not finish')
+check(#chats == n + 1 and chats[#chats] == 'SarmatDTC: download failed, map data too old (10 h), no DTC written',
+    'too old chat: ' .. tostring(chats[#chats]))
+check(not exists(ah64Path), 'cartridge written from too old data')
+
+print('-- cached data of another map: the player is told')
+mtime[statusPath] = nil
+local fixtureStatus = assert(io.open(statusPath, 'rb')):read('*a')
+writeFile(statusPath, '{"theatre": "Caucasus", "front": []}')
+n = retake()
+check(frames(30), 'download did not finish')
+check(#chats == n + 1 and chats[#chats] == 'SarmatDTC: download failed, map data is for Caucasus, mission map is Syria, no DTC written',
+    'other map chat: ' .. tostring(chats[#chats]))
+writeFile(statusPath, fixtureStatus)
+
+print('-- download timed out: cache used, the player is told')
+download = 'none'
+n = retake()
+check(#chats == n + 1, 'no cartridges from the cache before the download')
+clock = clock + 300
+cb.onSimulationFrame()
+check(logged('^download timed out'), 'timeout not logged')
+check(#chats == n + 2 and chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download timed out',
+    'timeout chat: ' .. tostring(chats[#chats]))
+
+print('-- no temporary files left next to the cartridges')
+for _, f in ipairs(listDir(dtcDir)) do
+    check(not string.match(f, '%.tmp$') and not string.match(f, '%.bak$'), 'left over: ' .. f)
+end
 
 if failures > 0 then
     print(failures .. ' check(s) failed')
