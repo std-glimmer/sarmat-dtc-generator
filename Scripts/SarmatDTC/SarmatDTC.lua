@@ -24,7 +24,7 @@ local CONFIG = {
 -- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua,
 -- user changes in config.user.lua (see readConfig)
 
-local VERSION   = '1.1.0'          -- in dcs.log: which version a player runs
+local VERSION   = '1.1.1'          -- in dcs.log: which version a player runs
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
@@ -127,6 +127,7 @@ local function resetState()
         spawn      = nil,     -- {x, z, name} of own slot's start base, if known
         lastKey    = nil,     -- input of the cartridges on disk (inputKey), nil after a failed write
         lastFiles  = {},      -- their paths
+        ioChecked  = false,   -- a replaced io.open is logged once per mission
     }
 end
 resetState()
@@ -178,18 +179,53 @@ local ENCODERS = {
     text = function(content) return tostring(content) end,
 }
 
+-- Writes `content` to a new file. Another GUI hook may wrap io.open so that write/close return
+-- nothing on success, so only an error message counts as a failure and the file size decides.
+local function writeVerified(path, content)
+    local f, err = io.open(path, 'wb')
+    if not f then return false, 'cannot create .tmp (' .. tostring(err) .. ')' end
+    local _, errW = f:write(content)
+    local _, errC = f:close()
+    if errW or errC then
+        return false, (errW and 'cannot write .tmp (' or 'cannot close .tmp (') .. tostring(errW or errC) .. ')'
+    end
+    local size = lfs.attributes(path, 'size')
+    if size ~= #content then
+        return false, 'cannot write .tmp (' .. tostring(size) .. ' of ' .. #content .. ' bytes on disk)'
+    end
+    return true
+end
+
+-- Where io.open and the file write method come from: nil if both are built in, otherwise
+-- e.g. "io.open from H:\DCS\Scripts\Hooks\X.lua". `f` = an open file (optional).
+local function ioReplaced(f)
+    local function from(fn)
+        local ok, i = pcall(debug and debug.getinfo, fn, 'S')
+        if not ok or type(i) ~= 'table' then return nil end
+        if i.what == 'C' then return nil end
+        return (string.gsub(tostring(i.source), '^@', ''))
+    end
+    local parts = {}
+    local open = from(io.open)
+    if open then parts[#parts + 1] = 'io.open from ' .. open end
+    if f then
+        local okW, write = pcall(function() return f.write end)
+        local src = okW and type(write) == 'function' and from(write)
+        if src then parts[#parts + 1] = 'file:write from ' .. src end
+        if type(f) ~= 'userdata' then parts[#parts + 1] = 'file is a ' .. type(f) end
+    end
+    return #parts > 0 and table.concat(parts, ', ') or nil
+end
+
 -- Writes via path.tmp; the previous file is moved aside first and put back if the new one
 -- cannot take its place (e.g. the file is locked), so a failed write never loses it.
 -- The error names the failed step: the io/os functions in DCS may fail without a message.
 local function writeFileAtomic(path, content)
     local tmp, bak = path .. '.tmp', path .. '.bak'
-    local f, err = io.open(tmp, 'wb')
-    if not f then return false, 'cannot create .tmp (' .. tostring(err) .. ')' end
-    local okW, errW = f:write(content)
-    local okC, errC = f:close()
-    if not (okW and okC) then
+    local okT, errT = writeVerified(tmp, content)
+    if not okT then
         os.remove(tmp)
-        return false, (okW and 'cannot close .tmp (' or 'cannot write .tmp (') .. tostring(errW or errC) .. ')'
+        return false, errT
     end
     os.remove(bak)
     local moved, errB = false, nil
@@ -209,7 +245,7 @@ local function writeFileAtomic(path, content)
 end
 
 -- dcs.log details for a failed write: state of the folder, the file and its .tmp/.bak,
--- and whether any new file can be created in the folder.
+-- whether any new file can be written in the folder and whether io functions are replaced.
 local function describePath(p)
     local a = lfs.attributes(p)
     if type(a) ~= 'table' then return 'missing' end
@@ -221,17 +257,18 @@ end
 
 local function writeDiagnostics(dir, path)
     local probe = dir .. CONFIG.FILE_PREFIX .. 'probe.tmp'
-    local f, err = io.open(probe, 'wb')
-    local probeText = 'cannot create (' .. tostring(err) .. ')'
+    local okP, errP = writeVerified(probe, 'probe')
+    local probeText = okP and 'ok' or string.gsub(tostring(errP), '%.tmp ', '')
+    if fileExists(probe) and not os.remove(probe) then probeText = probeText .. ', cannot delete' end
+    local f = io.open(probe, 'wb')
+    local replaced = ioReplaced(f)
     if f then
-        local okW = f:write('probe')
-        f:close()
-        probeText = okW and 'ok' or 'created, cannot write'
-        if not os.remove(probe) then probeText = probeText .. ', cannot delete' end
+        pcall(f.close, f)
+        os.remove(probe)
     end
     return 'folder ' .. describePath(string.gsub(dir, '\\$', '')) .. ', file ' .. describePath(path)
         .. ', .tmp ' .. describePath(path .. '.tmp') .. ', .bak ' .. describePath(path .. '.bak')
-        .. ', new file in folder: ' .. probeText
+        .. ', new file in folder: ' .. probeText .. (replaced and (', ' .. replaced) or '')
 end
 
 -- config.lua BASE_DTC: { [type] = file name in Saved Games\DCS.openbeta\DTC or absolute path }.
@@ -424,6 +461,11 @@ end
 -- Encodes and writes the core.build results. Returns log summary parts, short aircraft names
 -- for the chat (e.g. "AH-64D"), number of failed writes, written paths.
 local function writeOutputs(files)
+    if not state.ioChecked then
+        state.ioChecked = true
+        local replaced = ioReplaced()
+        if replaced then info(replaced .. ' (another hook?), writes are checked by file size') end
+    end
     local summary, written, seen, paths, failed = {}, {}, {}, {}, 0
     for _, f in ipairs(files) do
         local vtag = f.variant and ('[' .. f.variant .. ']') or ''
@@ -474,8 +516,10 @@ end
 local function report(summary, written, failed, problem, age, ms)
     local old = age and age > CONFIG.STALE_SEC and ('map data ' .. ageText(age) .. ' old') or nil
     local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
-    info('cartridges written for ' .. state.side .. around .. ' in ' .. ms .. ' ms'
-        .. (old and (', ' .. old) or '') .. ': ' .. table.concat(summary, ', '))
+    local head = #written == 0 and failed > 0 and ('no cartridges written (' .. failed .. ' failed)')
+        or ('cartridges written' .. (failed > 0 and (' (' .. failed .. ' failed)') or ''))
+    info(head .. ' for ' .. state.side .. around .. ' in ' .. ms .. ' ms'
+        .. (old and (', ' .. old) or '') .. (#summary > 0 and (': ' .. table.concat(summary, ', ')) or ''))
     local where = state.spawn and state.spawn.name and (' (' .. state.spawn.name .. ')') or ''
     local msg = 'SarmatDTC: ' .. string.upper(state.side) .. ' DTC ready' .. where .. ': '
         .. (#written > 0 and table.concat(written, ', ') or 'none')

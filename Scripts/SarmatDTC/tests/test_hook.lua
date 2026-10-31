@@ -23,10 +23,18 @@ local function check(cond, msg)
     end
 end
 
+local rawOpen = io.open   -- test cases below wrap io.open like another hook would
 local function exists(p)
-    local f = io.open(p, 'rb')
+    local f = rawOpen(p, 'rb')
     if f then f:close() return true end
     return false
+end
+
+local function fileSize(p)
+    local f = rawOpen(p, 'rb')
+    local size = f:seek('end')
+    f:close()
+    return size
 end
 
 local mtime = {}       -- [path] = fake modification time set by a test case
@@ -45,7 +53,8 @@ package.loaded['lfs'] = {
             firstSeen[p] = firstSeen[p] or os.time()
             return mtime[p] or firstSeen[p]
         end
-        if key == nil then return { mode = 'file', size = 0 } end
+        if key == 'size' then return fileSize(p) end
+        if key == nil then return { mode = 'file', size = fileSize(p) } end
         return 'file'
     end,
     dir = function(p)
@@ -410,6 +419,51 @@ from = #logs
 cb.onMissionLoadEnd()
 check(frames(30), 'download did not finish')
 check(logged('^DTC_DIR must be a folder path, got 5, ignored', from), 'bad DTC_DIR not reported')
+
+-- io.open wrapped by another hook: a proxy whose write/close return nothing (seen in a player's
+-- DCS); `keep = false` also drops the data, like a broken wrapper
+local realOpen = io.open
+local function wrapIo(keep)
+    io.open = function(p, mode)
+        local f, err = realOpen(p, mode)
+        if not f then return nil, err end
+        return {
+            write = function(self, s) if keep then f:write(s) end end,
+            read  = function(self, ...) return f:read(...) end,
+            close = function(self) f:close() end,
+        }
+    end
+end
+
+print('-- wrapped io.open: write/close results ignored, the file size decides')
+wrapIo(true)
+from = #logs
+cb.onMissionLoadEnd()
+check(frames(30), 'download did not finish')
+mySideNum, mySlot = 2, '101'
+cb.onPlayerChangeSlot(7)
+io.open = realOpen
+check(logged('^io%.open from .*test_hook%.lua %(another hook%?%), writes are checked by file size', from),
+    'replaced io.open not logged')
+check(not logged('^cannot write', from), 'write through a wrapped io.open failed')
+for _, t in ipairs(types) do
+    local f = realOpen(dtcDir .. 'SARMAT_' .. t .. '.dtc', 'rb')
+    check(f and string.find(f:read('*a'), '"type": "' .. t .. '"', 1, true), 'cartridge not written: ' .. t)
+    if f then f:close() end
+end
+
+print('-- wrapped io.open that drops the data: caught by the size, nothing reported as written')
+for _, t in ipairs(types) do os.remove(dtcDir .. 'SARMAT_' .. t .. '.dtc') end
+wrapIo(false)
+from = #logs
+retake()
+io.open = realOpen
+check(logged('^cannot write .*SARMAT_AH%-64D_BLK_II%.dtc: cannot write %.tmp %(0 of %d+ bytes on disk%)', from),
+    'size check did not catch the lost data')
+check(logged('^  .*new file in folder: cannot write %(0 of 5 bytes on disk%), io%.open from .*test_hook%.lua, file is a table', from),
+    'diagnostics do not name the replaced io')
+check(logged('^no cartridges written %(6 failed%) for blue', from), 'failed count not in the summary')   -- 3 DTC + 3 ZZ_TEST
+check(frames(30), 'download did not finish')
 
 print('-- no temporary files left next to the cartridges')
 for _, f in ipairs(listDir(dtcDir)) do
