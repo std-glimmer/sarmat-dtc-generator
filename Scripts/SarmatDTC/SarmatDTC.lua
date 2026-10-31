@@ -24,7 +24,7 @@ local CONFIG = {
 -- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua,
 -- user changes in config.user.lua (see readConfig)
 
-local VERSION   = '1.0.0'          -- in dcs.log: which version a player runs
+local VERSION   = '1.0.1'          -- in dcs.log: which version a player runs
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
@@ -142,12 +142,20 @@ local function resolveDir(dir)
     return dir
 end
 
+-- Returns the last lfs.mkdir error (nil when every part already existed or was created).
 local function mkdirs(dir)
     local path = string.match(dir, '^\\\\') and '\\\\' or ''
+    local lastErr
     for part in string.gmatch(dir, '[^\\]+') do
         path = path .. part .. '\\'
-        if not string.match(part, ':$') then lfs.mkdir(path) end
+        if not string.match(part, ':$') then
+            local ok, err = lfs.mkdir(path)
+            if not ok and lfs.attributes(string.gsub(path, '\\$', ''), 'mode') ~= 'directory' then
+                lastErr = path .. ': ' .. tostring(err)
+            end
+        end
     end
+    return lastErr
 end
 
 -- Serializers for module outputs (see SarmatDTC_core.lua header).
@@ -162,26 +170,58 @@ local ENCODERS = {
 
 -- Writes via path.tmp; the previous file is moved aside first and put back if the new one
 -- cannot take its place (e.g. the file is locked), so a failed write never loses it.
+-- The error names the failed step: the io/os functions in DCS may fail without a message.
 local function writeFileAtomic(path, content)
     local tmp, bak = path .. '.tmp', path .. '.bak'
     local f, err = io.open(tmp, 'wb')
-    if not f then return false, err end
+    if not f then return false, 'cannot create .tmp (' .. tostring(err) .. ')' end
     local okW, errW = f:write(content)
     local okC, errC = f:close()
     if not (okW and okC) then
         os.remove(tmp)
-        return false, errW or errC
+        return false, (okW and 'cannot close .tmp (' or 'cannot write .tmp (') .. tostring(errW or errC) .. ')'
     end
     os.remove(bak)
-    local moved = fileExists(path) and os.rename(path, bak)
+    local moved, errB = false, nil
+    if fileExists(path) then moved, errB = os.rename(path, bak) end
     local ok, errR = os.rename(tmp, path)
     if not ok then
-        if moved then os.rename(bak, path) end
+        local msg = 'cannot rename .tmp to the cartridge (' .. tostring(errR) .. ')'
+        if errB or (fileExists(path) and not moved) then
+            msg = msg .. ', old file not moved to .bak (' .. tostring(errB) .. ')'
+        end
+        if moved and not os.rename(bak, path) then msg = msg .. ', old file left as .bak' end
         os.remove(tmp)
-        return false, errR
+        return false, msg
     end
     if moved then os.remove(bak) end
     return true
+end
+
+-- dcs.log details for a failed write: state of the folder, the file and its .tmp/.bak,
+-- and whether any new file can be created in the folder.
+local function describePath(p)
+    local a = lfs.attributes(p)
+    if type(a) ~= 'table' then return 'missing' end
+    local s = tostring(a.mode)
+    if a.mode == 'file' then s = s .. ' ' .. tostring(a.size) .. ' bytes' end
+    if a.permissions then s = s .. ' ' .. tostring(a.permissions) end
+    return s
+end
+
+local function writeDiagnostics(dir, path)
+    local probe = dir .. CONFIG.FILE_PREFIX .. 'probe.tmp'
+    local f, err = io.open(probe, 'wb')
+    local probeText = 'cannot create (' .. tostring(err) .. ')'
+    if f then
+        local okW = f:write('probe')
+        f:close()
+        probeText = okW and 'ok' or 'created, cannot write'
+        if not os.remove(probe) then probeText = probeText .. ', cannot delete' end
+    end
+    return 'folder ' .. describePath(string.gsub(dir, '\\$', '')) .. ', file ' .. describePath(path)
+        .. ', .tmp ' .. describePath(path .. '.tmp') .. ', .bak ' .. describePath(path .. '.bak')
+        .. ', new file in folder: ' .. probeText
 end
 
 -- config.lua BASE_DTC: { [type] = file name in Saved Games\DCS.openbeta\DTC or absolute path }.
@@ -384,9 +424,9 @@ local function writeOutputs(files)
             if encode then okE, text = pcall(encode, f.content, f.type) end
             local dir = resolveDir(f.dir)
             local path = dir .. f.file
-            local okW, err = false, text
+            local okW, err, mkdirErr = false, text, nil
             if okE and type(text) == 'string' then
-                mkdirs(dir)
+                mkdirErr = mkdirs(dir)
                 okW, err = writeFileAtomic(path, text)
             end
             if okW then
@@ -407,6 +447,10 @@ local function writeOutputs(files)
                 end
             else
                 warn('cannot write ' .. path .. ': ' .. tostring(err))
+                if okE then
+                    local _, diag = pcall(writeDiagnostics, dir, path)
+                    warn('  ' .. tostring(diag) .. (mkdirErr and (', mkdir: ' .. mkdirErr) or ''))
+                end
                 failed = failed + 1
             end
         end

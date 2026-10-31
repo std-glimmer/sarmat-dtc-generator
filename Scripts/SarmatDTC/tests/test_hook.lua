@@ -33,13 +33,19 @@ local mtime = {}       -- [path] = fake modification time set by a test case
 local firstSeen = {}   -- otherwise: time of the first query, stable like a real file time
 package.loaded['lfs'] = {
     writedir = function() return writedir end,
-    mkdir = function(p) os.execute('mkdir "' .. p .. '" 2>nul') end,
+    mkdir = function(p) os.execute('mkdir "' .. p .. '" 2>nul') return true end,
     attributes = function(p, key)
-        if not exists(p) then return nil end
+        if not exists(p) then
+            -- renaming a folder to itself succeeds, a missing path fails
+            if not os.rename(p, p) then return nil end
+            if key == nil then return { mode = 'directory' } end
+            return key == 'mode' and 'directory' or nil
+        end
         if key == 'modification' then
             firstSeen[p] = firstSeen[p] or os.time()
             return mtime[p] or firstSeen[p]
         end
+        if key == nil then return { mode = 'file', size = 0 } end
         return 'file'
     end,
     dir = function(p)
@@ -367,6 +373,18 @@ net.get_my_player_id = realId
 local errLogs = 0
 for _, l in ipairs(logs) do if string.find(l, '^onPlayerChangeSlot failed: .*api broken') then errLogs = errLogs + 1 end end
 check(okCb and errLogs == 1, 'callback error escaped or not logged once (' .. errLogs .. ')')
+
+print('-- a failed write names the step and logs the folder state')
+os.remove(ah64Path)
+os.execute('mkdir "' .. ah64Path .. '"')   -- a folder in place of the cartridge: rename fails
+local from = #logs
+retake()
+check(frames(30), 'download did not finish')
+check(logged('^cannot write .*SARMAT_AH%-64D_BLK_II%.dtc: cannot rename %.tmp to the cartridge', from),
+    'failed write step not logged')
+check(logged('^  folder directory.*, file directory.*, %.tmp missing, %.bak missing, new file in folder: ok', from),
+    'failed write diagnostics not logged')
+os.execute('rmdir "' .. ah64Path .. '"')
 
 print('-- no temporary files left next to the cartridges')
 for _, f in ipairs(listDir(dtcDir)) do
