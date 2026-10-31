@@ -2,7 +2,18 @@
 -- The download really runs (wscript -> fetch.cmd -> curl.exe) against a file:// copy of the fixtures.
 -- usage: luae.exe test_hook.lua <fake writedir without trailing \> <file:// base url of data dir>
 -- Keep writedir short: DCS's os.execute drops commands longer than ~256 chars.
-local writedir, fileBase = arg[1] .. '\\', arg[2]
+-- The mod runs from a Cyrillic subfolder of it (UTF-8, like lfs.writedir() of a Cyrillic user name);
+-- the path is made here because luae.exe gets its arguments in the ANSI code page.
+local writedir, fileBase = arg[1] .. '\\Пилот\\', arg[2]
+os.execute('mkdir "' .. writedir .. '" && move "' .. arg[1] .. '\\Scripts" "' .. writedir .. 'Scripts" >nul')
+
+-- dofile cannot open UTF-8 paths, io.open can
+local function loadFile(path)
+    local f = assert(io.open(path, 'rb'))
+    local text = f:read('*a')
+    f:close()
+    return assert(loadstring(text, '@' .. path))()
+end
 
 local failures = 0
 local function check(cond, msg)
@@ -160,9 +171,13 @@ return {
         ["AH-64D_BLK_II"] = "MyApache.dtc",          -- valid base
         ["F-16C_50"]      = "MyApache.dtc",          -- wrong cartridge type
         ["FA-18C_hornet"] = "SARMAT_FA-18C_hornet.dtc", -- the generated file itself
-        ["F-14BU"]        = "missing.dtc",
+        ["F-14BU"]        = "replaced by config.user.lua",
     },
 }
+]])
+-- config.user.lua over config.lua: per-type BASE_DTC entry replaced, the others kept
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { BASE_DTC = { ["F-14BU"] = "missing.dtc" } }
 ]])
 os.execute('mkdir "' .. writedir .. 'DTC" 2>nul')
 writeFile(writedir .. 'DTC\\MyApache.dtc', dofile('Scripts/JSON.lua'):encode_pretty({ name = '', type = 'AH-64D_BLK_II',
@@ -182,10 +197,11 @@ return {
 }
 ]])
 
-dofile(writedir .. 'Scripts\\SarmatDTC\\SarmatDTC.lua')
+loadFile(writedir .. 'Scripts\\SarmatDTC\\SarmatDTC.lua')
 local cb = DCS.cb
 check(logged('aircraft modules: AH%-64D_BLK_II, F%-16C_50, FA%-18C_hornet, ZZ_TEST'), 'config.lua selection not applied')
 check(logged('config.lua lists NOPE'), 'unknown type in config.lua not reported')
+check(logged('^config.user.lua loaded'), 'config.user.lua not loaded')
 
 print('-- non-SARMAT server is ignored')
 server = 'Some Other Server'
@@ -200,12 +216,16 @@ mySideNum, mySlot = 0, ''
 os.execute('mkdir "' .. cacheDir .. '" 2>nul')
 writeFile(cacheDir .. 'done.flag', 'ok')
 writeFile(cacheDir .. 'done-1-1.flag', 'ok')
+writeFile(cacheDir .. 'status-1-1.part', '{}')
+writeFile(cacheDir .. 'units-1-1.part', '{}')
 download = 'none'
 cb.onMissionLoadEnd()
 clock = clock + 1
 cb.onSimulationFrame()
 check(not logged('map data downloaded'), 'took a flag of another fetch')
 check(not exists(cacheDir .. 'done.flag') and not exists(cacheDir .. 'done-1-1.flag'), 'old flags not removed')
+check(not exists(cacheDir .. 'status-1-1.part') and not exists(cacheDir .. 'status.json'),
+    'parts of another fetch not removed or put in place')
 cb.onSimulationStop()
 
 print('-- SARMAT server: download on mission load')
@@ -213,6 +233,8 @@ download = 'ok'
 cb.onMissionLoadEnd()
 check(frames(30), 'download did not finish')
 check(logged('map data downloaded'), 'download not reported as ok')
+check(exists(cacheDir .. 'status.json') and exists(cacheDir .. 'units.json'), 'downloaded pair not put in place')
+for _, f in ipairs(listDir(cacheDir)) do check(not string.match(f, '%.part$'), 'part left in the cache: ' .. f) end
 
 print('-- other player changes slot: ignored')
 mySideNum = 2
@@ -229,7 +251,8 @@ check(#chats == 1, 'expected one chat message, got ' .. #chats)
 check(chats[1] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ',
     'chat message: ' .. tostring(chats[1]))
 check(logged('base=Hatay'), 'airfield slot not resolved')
-check(logged('cartridges written for blue around Hatay'), 'spawn base not used for generation')
+check(logged('cartridges written for blue around Hatay in %d+ ms: '), 'spawn base or build time not logged')
+check(logged('^loaded, version %d+%.%d+%.%d+$'), 'version not logged')
 local blue = readAH64()
 
 print('-- base DTC from config.lua')
@@ -237,14 +260,14 @@ check(logged('AH%-64D_BLK_II%[sortie%] %+base'), 'AH-64 base DTC not used')
 check(string.find(blue, '121.5', 1, true) and string.find(blue, '"W01"', 1, true), 'AH-64 base fields missing in the cartridge')
 check(logged('BASE_DTC for F%-16C_50 is a AH%-64D_BLK_II cartridge'), 'wrong base type not reported')
 check(logged('BASE_DTC for FA%-18C_hornet is the generated file itself'), 'own output as base not rejected')
-check(logged('BASE_DTC for F%-14BU not found'), 'missing base not reported')
+check(logged('BASE_DTC for F%-14BU not found: .*missing%.dtc'), 'missing base not reported (config.user.lua entry)')
 
 print('-- extra outputs: text (relative + {side}), lua (absolute), json (%TEMP%)')
 local txtPath = writedir .. 'Exports\\blue\\ZZ_TEST.txt'
 local tf = io.open(txtPath, 'rb')
 check(tf and string.find(tf:read('*a'), '^front=%d+ side=blue$'), 'text output missing or wrong')
 if tf then tf:close() end
-local okLua, luaOut = pcall(dofile, writedir .. 'Abs\\ZZ_TEST.lua')
+local okLua, luaOut = pcall(loadFile, writedir .. 'Abs\\ZZ_TEST.lua')
 check(okLua and type(luaOut) == 'table' and luaOut.side == 'blue' and string.find(luaOut.txt or '', 'side=blue'),
     'lua output missing or not loadable')
 local JSON = dofile('Scripts/JSON.lua')
@@ -286,7 +309,7 @@ download = 'fail'
 local n = retake()
 check(#chats == n + 1 and chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - map data 2 h old',
     'stale cache chat: ' .. tostring(chats[#chats]))
-check(frames(30) and logged('^download failed'), 'failed download not reported')
+check(frames(30) and logged('^download failed %(status%.json: curl exit %d+'), 'failed download not reported with the curl code')
 check(chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download failed, map data 2 h old',
     'failed download chat: ' .. tostring(chats[#chats]))
 

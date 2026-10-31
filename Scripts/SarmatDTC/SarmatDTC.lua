@@ -21,14 +21,23 @@ local CONFIG = {
     SHOW_CHAT     = true,          -- local-only chat notification after writing cartridges
     LOG_SLOT      = true,          -- write own slot details (group, start airbase/FARP, position) to dcs.log
 }
--- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua
+-- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua,
+-- user changes in config.user.lua (see readConfig)
 
+local VERSION   = '1.0.0'          -- in dcs.log: which version a player runs
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
 
-local core = dofile(BASE_DIR .. 'SarmatDTC_core.lua')
-local JSON = dofile('Scripts/JSON.lua')
+-- not dofile: it cannot open UTF-8 paths (Cyrillic user name), io.open can (see core.loadFile)
+local function loadFile(path)
+    local f = assert(io.open(path, 'rb'))
+    local text = f:read('*a')
+    f:close()
+    return assert(loadstring(text, '@' .. path))()
+end
+local core = loadFile(BASE_DIR .. 'SarmatDTC_core.lua')
+local JSON = dofile('Scripts/JSON.lua')   -- relative to the DCS install
 local Terrain = nil
 
 local function info(msg)  log.write(LOG_TAG, log.INFO, msg) end
@@ -37,15 +46,43 @@ local function warn(msg)  log.write(LOG_TAG, log.WARNING, msg) end
 local settings = { OPTIONS = {} }   -- config.lua
 local aircraft = {}                 -- selected aircraft modules
 
--- Reads config.lua and aircraft/*.lua. Called on load and on every mission start,
--- so edits apply without restarting DCS.
-local function loadSettings()
-    local okC, cfg = pcall(dofile, BASE_DIR .. 'config.lua')
+local function fileExists(path)
+    return lfs.attributes(path, 'mode') == 'file'
+end
+
+-- config.lua (shipped defaults) with the optional config.user.lua over it: the user's AIRCRAFT
+-- list replaces the shipped one, BASE_DTC[type] and OPTIONS[type] entries replace per type.
+-- config.user.lua is not shipped, so a mod update keeps the user's settings.
+local function readConfig()
+    local okC, cfg = pcall(core.loadFile, BASE_DIR .. 'config.lua')
     if not okC or type(cfg) ~= 'table' then
         warn('cannot load config.lua (' .. tostring(cfg) .. '), using all aircraft modules')
         cfg = {}
     end
-    settings = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = cfg.OPTIONS or {}, BASE_DTC = cfg.BASE_DTC or {} }
+    local merged = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = {}, BASE_DTC = {} }
+    local user = {}
+    if fileExists(BASE_DIR .. 'config.user.lua') then
+        local okU, u = pcall(core.loadFile, BASE_DIR .. 'config.user.lua')
+        if okU and type(u) == 'table' then
+            user = u
+            info('config.user.lua loaded')
+        else
+            warn('cannot load config.user.lua (' .. tostring(u) .. '), using config.lua only')
+        end
+    end
+    if type(user.AIRCRAFT) == 'table' then merged.AIRCRAFT = user.AIRCRAFT end
+    for _, section in ipairs({ 'OPTIONS', 'BASE_DTC' }) do
+        for _, src in ipairs({ cfg[section], user[section] }) do
+            for k, v in pairs(type(src) == 'table' and src or {}) do merged[section][k] = v end
+        end
+    end
+    return merged
+end
+
+-- Reads the settings and aircraft/*.lua. Called on load and on every mission start,
+-- so edits apply without restarting DCS.
+local function loadSettings()
+    settings = readConfig()
 
     local dir = BASE_DIR .. 'aircraft\\'
     local files = {}
@@ -86,10 +123,6 @@ resetState()
 
 local function now()
     return DCS.getRealTime()
-end
-
-local function fileExists(path)
-    return lfs.attributes(path, 'mode') == 'file'
 end
 
 local function readFile(path)
@@ -382,12 +415,12 @@ local function writeOutputs(files)
 end
 
 -- dcs.log line with the details and a short chat line: side, spawn base, written aircraft and
--- notes (download problem, data age, errors).
-local function report(summary, written, failed, problem, age)
+-- notes (download problem, data age, errors). ms: GUI thread time of decoding, building and writing.
+local function report(summary, written, failed, problem, age, ms)
     local old = age and age > CONFIG.STALE_SEC and ('map data ' .. ageText(age) .. ' old') or nil
     local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
-    info('cartridges written for ' .. state.side .. around .. (old and (', ' .. old) or '') .. ': '
-        .. table.concat(summary, ', '))
+    info('cartridges written for ' .. state.side .. around .. ' in ' .. ms .. ' ms'
+        .. (old and (', ' .. old) or '') .. ': ' .. table.concat(summary, ', '))
     local where = state.spawn and state.spawn.name and (' (' .. state.spawn.name .. ')') or ''
     local msg = 'SarmatDTC: ' .. string.upper(state.side) .. ' DTC ready' .. where .. ': '
         .. (#written > 0 and table.concat(written, ', ') or 'none')
@@ -423,6 +456,7 @@ local function generate(final, problem)
         info('map data unchanged, cartridges kept')
         return
     end
+    local started = os.clock()
     local data, whyNot = decodeCache(cache)
     if not data then return fail(whyNot) end
 
@@ -439,13 +473,13 @@ local function generate(final, problem)
         warn('build failed: ' .. tostring(files))
         return fail('build failed, see dcs.log')
     end
-    for _, w in ipairs(warnings) do warn('config.lua option: ' .. w) end
+    for _, w in ipairs(warnings) do warn(w) end
     for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
 
     local summary, written, writeFailed, paths = writeOutputs(files)
     -- a failed write may succeed next time (locked file), so it is not remembered as done
     state.lastKey, state.lastFiles = writeFailed == 0 and key or nil, paths
-    report(summary, written, #errors + writeFailed, problem, cache.age)
+    report(summary, written, #errors + writeFailed, problem, cache.age, math.floor((os.clock() - started) * 1000 + 0.5))
 end
 
 ------------------------------------------------------------------------------
@@ -458,13 +492,43 @@ local function flagPath(id)
     return CACHE_DIR .. '\\done-' .. id .. '.flag'
 end
 
--- Result flags of earlier fetches (and done.flag of old versions) are removed before a new one.
-local function removeFlags()
+-- Result flags and downloaded parts of earlier fetches (and done.flag of old versions) are removed
+-- before a new one; a part a late fetch still writes is locked and stays until the next time.
+local function removeLeftovers()
     pcall(function()
         for f in lfs.dir(CACHE_DIR) do
-            if string.match(f, '^done.*%.flag$') then os.remove(CACHE_DIR .. '\\' .. f) end
+            if string.match(f, '^done.*%.flag$') or string.match(f, '%.part$') then
+                os.remove(CACHE_DIR .. '\\' .. f)
+            end
         end
     end)
+end
+
+-- Puts the pair downloaded by fetch `id` in place of cache/status.json + units.json. Done here, on
+-- the GUI thread, so the pair is never read half-updated and a late earlier fetch never replaces it.
+local function promoteParts(id)
+    local names = { 'status', 'units' }
+    for _, n in ipairs(names) do
+        if not fileExists(CACHE_DIR .. '\\' .. n .. '-' .. id .. '.part') then return false, n .. '.json missing' end
+    end
+    for _, n in ipairs(names) do
+        local target = CACHE_DIR .. '\\' .. n .. '.json'
+        os.remove(target)
+        local ok, err = os.rename(CACHE_DIR .. '\\' .. n .. '-' .. id .. '.part', target)
+        if not ok then return false, tostring(err) end
+    end
+    return true
+end
+
+local CURL_ERRORS = { [6] = 'host not found', [7] = 'cannot connect', [22] = 'HTTP error', [28] = 'timeout',
+    [35] = 'TLS error', [60] = 'bad certificate', [63] = 'file too big' }
+
+-- "fail units.json 28" -> "units.json: curl exit 28, timeout"
+local function failText(result)
+    local file, rc = string.match(result, '^fail (%S+) (%d+)')
+    if not file then return 'no details' end
+    local known = CURL_ERRORS[tonumber(rc)]
+    return file .. ': curl exit ' .. rc .. (known and (', ' .. known) or '')
 end
 
 local function startFetch()
@@ -480,7 +544,7 @@ local function startFetch()
         return
     end
     lfs.mkdir(CACHE_DIR)
-    removeFlags()
+    removeLeftovers()
     fetchSeq = fetchSeq + 1
     local id = os.time() .. '-' .. fetchSeq
     -- fetch.vbs starts fetch.cmd (curl.exe) in a hidden window and returns at once; it writes
@@ -505,12 +569,17 @@ local function pollFetch()
         state.fetching = false
         local result = readFile(flag) or ''
         os.remove(flag)
-        if string.find(result, 'ok') then
+        local ok, why = false, failText(result)
+        if string.match(result, '^ok') then
+            ok, why = promoteParts(state.fetchId)
+            why = why and ('cannot put the data in place: ' .. why)
+        end
+        if ok then
             state.fetchedAt = now()
             info('map data downloaded')
             generate(true)
         else
-            warn('download failed, using previous data if any')
+            warn('download failed (' .. why .. '), using previous data if any')
             generate(true, 'download failed')
         end
     elseif now() - state.fetchStart > CONFIG.FETCH_TIMEOUT then
@@ -588,4 +657,4 @@ for name, fn in pairs(callbacks) do
 end
 
 DCS.setUserCallbacks(safeCallbacks)
-info('loaded')
+info('loaded, version ' .. VERSION)

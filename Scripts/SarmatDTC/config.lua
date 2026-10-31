@@ -1,4 +1,12 @@
--- SarmatDTC user settings. Re-read on every mission start (no DCS restart needed).
+-- SarmatDTC settings. Re-read on every mission start (no DCS restart needed).
+--
+-- This file is replaced by every mod update. Put your own settings into config.user.lua next to it
+-- (same shape, only what you change); it is never shipped, so updates keep it:
+--     return {
+--         AIRCRAFT = { "AH-64D_BLK_II", "F-16C_50" },                   -- replaces the list below
+--         BASE_DTC = { ["AH-64D_BLK_II"] = "AH-64D_BLK_II_DTC_SAR_3.dtc" },
+--         OPTIONS  = { ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15 } },     -- replaces the entry per aircraft
+--     }
 return {
     -- Cartridges are generated only for the aircraft listed here.
     -- Comment out (--) a line to skip that aircraft. Names = `type` of the files in aircraft/.

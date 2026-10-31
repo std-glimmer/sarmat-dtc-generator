@@ -16,3 +16,5 @@
 
 # runtime download cache
 /Scripts/SarmatDTC/cache/
+# the user's own settings (config.lua holds the shipped defaults)
+/Scripts/SarmatDTC/config.user.lua

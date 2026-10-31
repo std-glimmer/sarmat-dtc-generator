@@ -369,6 +369,27 @@ local function sideKey(s)
     return nil
 end
 
+-- Map data is untrusted JSON: one malformed record must not fail the whole build.
+local function isNum(v)
+    return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
+end
+
+local function listOf(v)
+    return type(v) == "table" and v or {}
+end
+
+local function textOf(v)
+    local t = type(v)
+    return (t == "string" or t == "number") and tostring(v) or ""
+end
+
+-- Record with numeric x/z, else nil (counted in s.skipped).
+local function placed(s, p)
+    if type(p) == "table" and isNum(p.x) and isNum(p.z) then return p end
+    s.skipped = s.skipped + 1
+    return nil
+end
+
 -- situation = {
 --     side   = "blue",
 --     front  = { {x, z}, ... },                     -- front line polyline
@@ -379,35 +400,42 @@ end
 --     farps  = { {x, z, friendly, name, kind}, ... } -- FARPs and FOBs, twin pads merged
 --     spawn  = { x, z, name } | nil                 -- own start base (env.spawn), set by M.build
 --     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
+--     skipped = n                                   -- malformed map records left out
 -- }
 function M.situation(status, units, mySide)
-    status, units = status or {}, units or {}
+    status, units = listOf(status), listOf(units)
     mySide = sideKey(mySide) or "blue"
-    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {} }
+    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {}, skipped = 0 }
 
-    for _, p in ipairs(status.front or {}) do
-        if p.x and p.z then s.front[#s.front + 1] = { x = p.x, z = p.z } end
+    for _, p in ipairs(listOf(status.front)) do
+        if placed(s, p) then s.front[#s.front + 1] = { x = p.x, z = p.z } end
     end
 
-    for _, g in ipairs(units.groups or {}) do
-        local side = sideKey(g.side)
-        if g.cat == "ground" and side and g.x and g.z then
-            local types = g.types or {}
-            if #types == 0 then types = { g.type } end
+    for _, g in ipairs(listOf(units.groups)) do
+        g = placed(s, g)
+        local side = g and sideKey(g.side)
+        if g and g.cat == "ground" and side then
+            local types = {}
+            for _, t in ipairs(listOf(g.types)) do
+                if textOf(t) ~= "" then types[#types + 1] = textOf(t) end
+            end
+            local lead = textOf(g.type)
+            if #types == 0 then types = { lead } end
             local ad = M.adTypeOf(types)
             s.groups[#s.groups + 1] = {
                 x = g.x, z = g.z, friendly = side == mySide,
-                type = g.type or "", count = g.count or #types,
+                type = lead, count = (isNum(g.count) and g.count >= 0) and g.count or #types,
                 class = M.groundClassOf(types), ad = ad,
-                adLead = ad ~= nil and M.adTypeOf({ g.type }) == ad,
+                adLead = ad ~= nil and M.adTypeOf({ lead }) == ad,
             }
         end
     end
 
     -- SAM sites (may be despawned while nobody is near, still a threat)
-    for _, o in ipairs(status.strong or {}) do
-        local side = sideKey(o.side)
-        if (o.kind == "SAM" or o.kind == "Sam") and side and not o.dead and o.x and o.z then
+    for _, o in ipairs(listOf(status.strong)) do
+        o = placed(s, o)
+        local side = o and sideKey(o.side)
+        if o and (o.kind == "SAM" or o.kind == "Sam") and side and not o.dead then
             local friendly = side == mySide
             local covered = false
             for _, g in ipairs(s.groups) do
@@ -415,22 +443,23 @@ function M.situation(status, units, mySide)
             end
             if not covered then
                 s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
-                    ad = M.adTypeOf({ o.name or "" }) or M.GENERIC_AD,
-                    name = (string.gsub(o.name or "", "^SAM%s*", "")) }
+                    ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
+                    name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
             end
         end
     end
 
-    for _, o in ipairs(status.objectives or {}) do
-        local owner = sideKey(o.owner)
-        if (o.kind == "FARP" or o.kind == "FOB") and owner and o.x and o.z then
+    for _, o in ipairs(listOf(status.objectives)) do
+        o = placed(s, o)
+        local owner = o and sideKey(o.owner)
+        if o and (o.kind == "FARP" or o.kind == "FOB") and owner then
             local friendly = owner == mySide
             local twin = false
             for _, f in ipairs(s.farps) do
                 if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
             end
             if not twin then
-                local name = tostring(o.name or "")
+                local name = textOf(o.name)
                 if o.kind == "FARP" then name = "FARP " .. name end
                 s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
             end
@@ -529,6 +558,18 @@ local function moduleProblem(mod)
     return nil
 end
 
+-- dofile that also works for UTF-8 paths (Cyrillic user name): DCS's Lua opens them with io.open,
+-- but not with dofile/loadfile.
+function M.loadFile(path)
+    local f, err = io.open(path, "rb")
+    if not f then error(err, 0) end
+    local text = f:read("*a")
+    f:close()
+    local chunk, cerr = loadstring(text, "@" .. path)
+    if not chunk then error(cerr, 0) end
+    return chunk()
+end
+
 -- Loads aircraft modules from `dir` (with trailing separator); `files` = list of file names.
 -- Files starting with "_" (templates) are skipped. Returns modules sorted by file name, errors.
 function M.loadAircraft(dir, files)
@@ -538,7 +579,7 @@ function M.loadAircraft(dir, files)
     end
     table.sort(names)
     for _, f in ipairs(names) do
-        local ok, mod = pcall(dofile, dir .. f)
+        local ok, mod = pcall(M.loadFile, dir .. f)
         local problem = ok and moduleProblem(mod) or (not ok and tostring(mod))
         if problem then
             errors[#errors + 1] = f .. ": " .. problem
@@ -692,13 +733,17 @@ end
 -- native cartridge is laid over (M.applyBase). `prefix` = native file name prefix (default M.FILE_PREFIX).
 -- A failing module or output does not stop the others.
 -- Returns list of { type, id, format, dir, file, content, stats, base, dropped, variant,
--- defaultVariant }, list of error strings, list of warnings (options fixed by the module `limits`).
+-- defaultVariant }, list of error strings, list of warnings for dcs.log (options fixed by the
+-- module `limits`, malformed map records skipped).
 -- An extra output whose build returns nil is listed as { type, id, skip = true, stats } (nothing to write).
 function M.build(status, units, mySide, env, modules, overrides, bases, prefix)
     local situation = M.situation(status, units, mySide)
     situation.env = env
     if env.spawn and env.spawn.x and env.spawn.z then situation.spawn = env.spawn end
     local out, errors, warnings = {}, {}, {}
+    if situation.skipped > 0 then
+        warnings[1] = "map data: " .. situation.skipped .. " malformed record(s) skipped"
+    end
     for _, mod in ipairs(modules) do
         local ov = overrides and overrides[mod.type] or {}
         local vname, variant, verr = M.variantOf(mod, ov.variant)
@@ -708,7 +753,7 @@ function M.build(status, units, mySide, env, modules, overrides, bases, prefix)
         if opt.enabled ~= false then
             if verr then errors[#errors + 1] = mod.type .. ": " .. verr end
             for _, w in ipairs(applyLimits(opt, mod.limits, defaults)) do
-                warnings[#warnings + 1] = mod.type .. ": " .. w
+                warnings[#warnings + 1] = "config.lua option: " .. mod.type .. ": " .. w
             end
             local run = { situation = situation, opt = opt, built = {}, base = bases and bases[mod.type],
                 terrain = env.terrain, variant = vname,

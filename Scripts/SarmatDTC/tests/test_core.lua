@@ -287,6 +287,31 @@ do
     check(#ok == 0 and #errs == 1, "duplicate native output id must be rejected")
 end
 
+-- malformed map data: bad records are skipped and counted, the rest still builds
+do
+    local badStatus = {
+        theatre = "Syria",
+        front = { { x = 0, z = 0 }, { x = "abc", z = 1 }, 5, { x = 10000, z = 0 } },
+        strong = { { kind = "SAM", side = "red", name = { "table" }, x = 30000, z = 0 }, { kind = "SAM", side = "red" } },
+        objectives = "not a list",
+    }
+    local badUnits = { groups = {
+        { cat = "ground", side = "red", x = 20000, z = 0, type = "T-72B", types = "T-72B", count = "5" },
+        { cat = "ground", side = "red", x = 0 / 0, z = 0 },
+        { cat = "ground", side = "red", x = 25000, z = 0, type = { 1 }, types = { "SA-11 Buk LN 9A310M1", { 2 } } },
+        false,
+    } }
+    local s = core.situation(badStatus, badUnits, "blue")
+    check(#s.front == 2 and #s.groups == 2 and #s.sites == 1 and #s.farps == 0 and s.skipped == 5,
+        "malformed data: front/groups/sites/skipped " .. #s.front .. "/" .. #s.groups .. "/" .. #s.sites .. "/" .. s.skipped)
+    check(s.groups[1].count == 1 and s.groups[1].class == "armor" and s.groups[2].ad == "SA-11" and s.groups[2].type == "",
+        "malformed data: group fields not sanitized")
+    local out, errors, warns = core.build(badStatus, badUnits, "blue", env, modules, {})
+    check(#errors == 0 and #out > 0, "malformed data must not fail the build: " .. table.concat(errors, "; "))
+    check(warns[1] == "map data: 5 malformed record(s) skipped", "malformed data warning: " .. tostring(warns[1]))
+    check(#({ core.build("x", nil, "blue", env, modules, {}) })[2] == 0, "non-table map data must not fail the build")
+end
+
 -- Lua serializer round trip
 do
     local value = { 1, "two", { x = 1.5, ["bad key"] = true }, name = "q\"uote\n", nested = { list = { 3, 4 } } }
