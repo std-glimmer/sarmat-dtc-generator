@@ -252,13 +252,16 @@ do
 end
 
 -- AH-64 priority: around the spawn base, enemy first, still near the front
+-- (short lists over the whole map, so that the order decides what gets in)
 do
     local ah = mods["AH-64D_BLK_II"]
     local function ctrlmOf(spawn, over)
         local e = {}
         for k, v in pairs(env) do e[k] = v end
         e.spawn = spawn
-        local out = core.build(status, units, "red", e, { ah }, { ["AH-64D_BLK_II"] = over or {} })
+        local o = { CTRLM = 20, TGT = 10, AO_DEPTH_M = 0 }
+        for k, v in pairs(over or {}) do o[k] = v end
+        local out = core.build(status, units, "red", e, { ah }, { ["AH-64D_BLK_II"] = o })
         return out[1].content.NAV.Mission_1.Points.CTRLM.POINTS, out[1].content.NAV.Mission_1.Points.TGT.POINTS, out[1].stats
     end
     local function meanDist(points, p0)
@@ -284,6 +287,76 @@ do
     check(same, "SPAWN_WEIGHT = 0 must ignore the spawn")
     print(string.format("spawn priority: mean dist to north spawn %.0f km (no spawn %.0f km), enemy %d vs %d without preference",
         meanDist(cN, spawnN) / 1000, meanDist(c0, spawnN) / 1000, sEnemy.enemy, sEven.enemy))
+end
+
+-- AH-64 TSD picture: area of operations, one symbol per position, own units only near the front,
+-- readable free text, TGT safe set
+do
+    local ah = mods["AH-64D_BLK_II"]
+    local o = ah.options
+    local function d(a, b) return math.sqrt((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2) end
+    local function first(note) return string.match(note, "^(%S+)") end
+    local ownAD = 0
+    for _, case in ipairs({ { "blue", 103379, 83165, "Taftanaz" }, { "red", 8419, 75521, "Hama" } }) do
+        local side, tag = case[1], "AH-64 " .. case[1] .. " " .. case[4]
+        local e = {}
+        for k, v in pairs(env) do e[k] = v end
+        e.spawn = { x = case[2], z = case[3], name = case[4] }
+        local function run(over)
+            local out, errors = core.build(status, units, side, e, { ah }, { ["AH-64D_BLK_II"] = over or {} })
+            check(#errors == 0, tag .. ": build errors " .. table.concat(errors, "; "))
+            local pts = out[1].content.NAV.Mission_1.Points
+            return pts.CTRLM.POINTS, pts.TGT.POINTS, out[1].stats
+        end
+        local ctrlm, tgt, st = run()
+        local front = core.situation(status, units, side).front
+        local function frontDist(p) return core.distToPolyline(p.x, p.y, front) end
+        local spawn = { x = e.spawn.x, y = e.spawn.z }
+        local reach = frontDist(spawn) + o.AO_DEPTH_M
+
+        check(#ctrlm > 0 and #tgt > 0 and #tgt <= 25, tag .. ": point counts " .. #ctrlm .. "/" .. #tgt)
+        check(st.merged > 0, tag .. ": nothing merged")
+        local lastRank = 0
+        for i, p in ipairs(ctrlm) do
+            local farp, own = p.id == 68, string.sub(p.note, 1, 4) == "OWN "
+            check(p.id ~= 12, tag .. ": own AD shown by default")
+            check(d(p, spawn) <= reach + 1, tag .. ": CTRLM outside the area of operations " .. p.note)
+            if farp then
+                own = string.sub(p.text, 1, 1) == "F"
+                check(string.match(p.text, "^[FE]%d%d$") ~= nil, tag .. ": FARP text " .. p.text)
+                if own then
+                    check(frontDist(p) <= frontDist(spawn) + 5000 + 1, tag .. ": own FARP behind the base " .. p.note)
+                end
+            else
+                check(string.match(p.text, "^%d+$") ~= nil, tag .. ": unit text is not a vehicle count " .. p.text)
+                if own then check(frontDist(p) <= o.OWN_FRONT_M + 1, tag .. ": own unit far from the front " .. p.note) end
+                for j = 1, i - 1 do
+                    local q = ctrlm[j]
+                    if q.id ~= 68 and string.sub(q.note, 1, 4) == string.sub(p.note, 1, 4) then
+                        check(d(p, q) >= o.CLUSTER_M - 1, tag .. ": unit symbols overlap " .. q.note .. " / " .. p.note)
+                    end
+                end
+            end
+            local rank = (farp and own) and 0 or (own and 2 or 1)
+            check(rank >= lastRank, tag .. ": CTRLM order (own FARPs, enemy, own units) at " .. p.text)
+            lastRank = rank
+        end
+        for i, p in ipairs(tgt) do
+            check(d(p, spawn) - o.RING_CAP_M <= reach + 1, tag .. ": TGT outside the area of operations " .. p.note)
+            for j = 1, i - 1 do
+                local q = tgt[j]
+                check(first(q.note) ~= first(p.note) or d(p, q) >= o.CLUSTER_M - 1, tag .. ": duplicate threat " .. p.note)
+            end
+        end
+
+        local c0, t0, s0 = run({ CLUSTER_M = 0 })
+        check(s0.merged == 0 and #c0 >= #ctrlm and #t0 >= #tgt, tag .. ": CLUSTER_M = 0 must not merge")
+        local cAll = run({ AO_DEPTH_M = 0 })
+        check(#cAll >= #ctrlm, tag .. ": AO_DEPTH_M = 0 must not filter")
+        for _, p in ipairs(run({ OWN_AD = true })) do if p.id == 12 then ownAD = ownAD + 1 end end
+        print(string.format("%s: CTRLM %d (no merging %d), TGT %d, merged %d", tag, #ctrlm, #c0, #tgt, st.merged))
+    end
+    check(ownAD > 0, "AH-64: OWN_AD = true shows no own air defence")
 end
 
 local function byType(list)
