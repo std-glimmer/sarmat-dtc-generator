@@ -50,6 +50,15 @@ for _, t in ipairs({ "AH-64D_BLK_II", "F-16C_50", "FA-18C_hornet", "F-14BU", "F-
     check(mods[t] ~= nil, "module not found: " .. t)
 end
 
+-- the template is the API reference: it must stay a working module
+do
+    local tpl = dofile(aircraftDir .. "_template.lua")
+    local out, errors, warns = core.build(status, units, "blue", env, { tpl },
+        { [tpl.type] = { variant = "dense", outputs = { ["my-tool"] = { enabled = true } } } })
+    check(#errors == 0 and #warns == 0 and #out == 2 and out[2].content.front[1].lat ~= nil,
+        "template module: " .. table.concat(errors, "; ") .. table.concat(warns, "; "))
+end
+
 -- F-15E example: collects all data, writes nothing; the commented final build must stay valid Lua
 do
     local f15 = mods["F-15ESE"]
@@ -202,6 +211,42 @@ for _, mod in ipairs(modules) do
     end
 end
 
+-- option limits: config.lua values are clamped with a warning, module defaults need none
+do
+    for _, mod in ipairs(modules) do
+        local names = { false }   -- false: module without variants
+        if mod.variants then
+            names = {}
+            for k in pairs(mod.variants) do names[#names + 1] = k end
+        end
+        for _, name in ipairs(names) do
+            local _, _, warns = core.build(status, units, "blue", env, { mod }, { [mod.type] = { variant = name or nil } })
+            check(#warns == 0, mod.type .. ": defaults outside limits: " .. table.concat(warns, "; "))
+        end
+        for k, v in pairs(mod.options or {}) do
+            if type(v) == "number" then check(mod.limits and mod.limits[k], mod.type .. ": option " .. k .. " has no limits") end
+        end
+    end
+    local f16 = mods["F-16C_50"]
+    local out, errors, warns = core.build(status, units, "blue", env, { f16 },
+        { ["F-16C_50"] = { POINTS = 30, THREATS = "15", MIN_RANGE = -1 } })
+    local mpd = out[1].content.MPD
+    check(#errors == 0 and #warns == 3, "F-16 limits: " .. #warns .. " warning(s)")
+    check(#mpd.GEO_LINES <= 25 and mpd.GEO_LINES[#mpd.GEO_LINES].id == "GEO_LINES" .. (30 + #mpd.GEO_LINES)
+        and #mpd.THREAT_PTS == 15, "F-16 limits: values not clamped")
+    check(string.find(table.concat(warns, "\n"), "F-16C_50: POINTS = 30 is out of range, using 25", 1, true),
+        "F-16 limits: warning text " .. tostring(warns[1]))
+    out, errors, warns = core.build(status, units, "blue", env, { mods["AH-64D_BLK_II"] },
+        { ["AH-64D_BLK_II"] = { CTRLM = 60, TGT = 10.6 } })
+    local pts = out[1].content.NAV.Mission_1.Points
+    check(#warns == 2 and #pts.TGT.POINTS == 11 and pts.CTRLM.POINTS[#pts.CTRLM.POINTS].num <= 99,
+        "AH-64 limits: CTRLM/TGT not clamped")
+    out = core.build(status, units, "blue", env, { mods["F-14BU"] }, { ["F-14BU"] = { LINES = 4, LINE_PTS = 9 } })
+    local total = 0
+    for _, ln in ipairs(out[1].content.NAV[1].lines) do total = total + #ln.points end
+    check(total <= 20, "F-14: 4 x 9 must be cut to 20 points, got " .. total)
+end
+
 -- module validation: variants
 do
     local tmp = os.getenv("TEMP") .. "\\"
@@ -248,6 +293,8 @@ do
     local back = assert(loadstring("return " .. core.toLua(value)))()
     check(back[1] == 1 and back[2] == "two" and back[3].x == 1.5 and back[3]["bad key"] == true
         and back.name == value.name and back.nested.list[2] == 4, "toLua round trip")
+    local odd = assert(loadstring("return " .. core.toLua({ nan = 0 / 0, inf = 1 / 0, ninf = -1 / 0 })))()
+    check(odd.nan ~= odd.nan and odd.inf == math.huge and odd.ninf == -math.huge, "toLua NaN/inf")
 end
 
 -- base cartridge (config.lua BASE_DTC)
@@ -598,6 +645,53 @@ for _, side in ipairs({ "blue", "red" }) do
 end
 
 check(results.blue.tgt ~= results.red.tgt or results.blue.own ~= results.red.own, "sides produce identical output")
+
+-- expected output: every module with default options must produce exactly the recorded files
+-- (tests/fixtures/expected/<case>.lua). Refactoring must keep them; an intended change of the
+-- output is recorded with run_tests.ps1 -UpdateExpected (env SDTC_UPDATE_EXPECTED=1).
+do
+    local update = os.getenv("SDTC_UPDATE_EXPECTED") == "1"
+    local expectedDir = scriptDir .. "\\tests\\fixtures\\expected\\"
+    if update then os.execute('mkdir "' .. expectedDir .. '" 2>nul') end
+    local cases = {
+        { "blue_nospawn", "blue" }, { "red_nospawn", "red" },
+        { "blue_taftanaz", "blue", { x = 103379, z = 83165, name = "Taftanaz" } },
+        { "red_hama", "red", { x = 8419, z = 75521, name = "Hama" } },
+    }
+    for _, case in ipairs(cases) do
+        local e = {}
+        for k, v in pairs(env) do e[k] = v end
+        e.spawn = case[3]
+        local list, errors = core.build(status, units, case[2], e, modules, {})
+        check(#errors == 0, "expected " .. case[1] .. ": build errors " .. table.concat(errors, "; "))
+        local snapshot = {}
+        for i, o in ipairs(list) do
+            snapshot[i] = { type = o.type, id = o.id, dir = o.dir, file = o.file, skip = o.skip,
+                stats = o.stats, content = o.content }
+        end
+        local text = "return " .. core.toLua(snapshot) .. "\n"
+        local path = expectedDir .. case[1] .. ".lua"
+        if update then
+            local f = assert(io.open(path, "wb"))
+            f:write(text)
+            f:close()
+            print("expected output recorded: " .. path)
+        else
+            local f = io.open(path, "rb")
+            local recorded = f and string.gsub(f:read("*a"), "\r", "")
+            if f then f:close() end
+            check(recorded ~= nil, "expected output missing: " .. path .. " (run_tests.ps1 -UpdateExpected)")
+            if recorded and recorded ~= text then
+                local ln = 1
+                for i = 1, math.min(#recorded, #text) do
+                    if string.byte(recorded, i) ~= string.byte(text, i) then break end
+                    if string.byte(text, i) == 10 then ln = ln + 1 end
+                end
+                check(false, "output differs from " .. path .. " at line " .. ln)
+            end
+        end
+    end
+end
 
 local tags = {}
 for tag in pairs(results) do tags[#tags + 1] = tag end

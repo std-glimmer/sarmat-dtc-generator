@@ -28,7 +28,6 @@ local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
 
 local core = dofile(BASE_DIR .. 'SarmatDTC_core.lua')
-core.FILE_PREFIX = CONFIG.FILE_PREFIX
 local JSON = dofile('Scripts/JSON.lua')
 local Terrain = nil
 
@@ -79,6 +78,8 @@ local function resetState()
         fetchedAt  = nil,     -- real time of last successful download
         nextPoll   = 0,
         spawn      = nil,     -- {x, z, name} of own slot's start base, if known
+        lastKey    = nil,     -- input of the cartridges on disk (inputKey), nil after a failed write
+        lastFiles  = {},      -- their paths
     }
 end
 resetState()
@@ -101,7 +102,7 @@ end
 
 -- Output dir: absolute ("C:\...", "\\server\..."), with %ENV% variables, or relative to Saved Games.
 local function resolveDir(dir)
-    dir = string.gsub(dir or 'DTC', '%%(%w+)%%', function(k) return os.getenv(k) or ('%' .. k .. '%') end)
+    dir = string.gsub(dir or 'DTC', '%%([%w_()]+)%%', function(k) return os.getenv(k) or ('%' .. k .. '%') end)
     dir = string.gsub(dir, '/', '\\')
     if not (string.match(dir, '^%a:\\') or string.match(dir, '^\\\\')) then dir = lfs.writedir() .. dir end
     if string.sub(dir, -1) ~= '\\' then dir = dir .. '\\' end
@@ -161,7 +162,7 @@ local function loadBases()
         if not (string.match(path, '^%a:\\') or string.match(path, '^\\\\')) then
             path = lfs.writedir() .. 'DTC\\' .. path
         end
-        local own = lfs.writedir() .. 'DTC\\' .. core.FILE_PREFIX .. unitType .. '.dtc'
+        local own = lfs.writedir() .. 'DTC\\' .. CONFIG.FILE_PREFIX .. unitType .. '.dtc'
         local stamp = lfs.attributes(path, 'modification')
         if string.lower(path) == string.lower(own) then
             warn('BASE_DTC for ' .. unitType .. ' is the generated file itself, ignored')
@@ -215,8 +216,8 @@ local function terrainId()
 end
 
 local function serverName()
-    local ok, settings = pcall(net.get_server_settings)
-    if ok and type(settings) == 'table' and settings.name then return settings.name end
+    local ok, srv = pcall(net.get_server_settings)
+    if ok and type(srv) == 'table' and srv.name then return srv.name end
     return ''
 end
 
@@ -289,59 +290,57 @@ local function ageText(sec)
     return math.floor(sec / 3600 + 0.5) .. ' h'
 end
 
--- final: no download follows this attempt, so the player is told when nothing is written
--- (an attempt from the old cache before a download stays silent). problem: why the data
--- may be outdated ("download failed"), shown in the chat.
-local function generate(final, problem)
-    if not (state.active and state.side) then return end
-    local function fail(msg)
-        if not final then
-            info(msg .. ', waiting for the download')
-            return
-        end
-        warn(msg)
-        chat('SarmatDTC: ' .. (problem and (problem .. ', ') or '') .. msg .. ', no DTC written')
-    end
-
-    local age = cacheAge()
+-- Cached map data as text: { status, units, age } or nil, reason.
+local function loadCache()
     local statusTxt = readFile(CACHE_DIR .. '\\status.json')
     local unitsTxt  = readFile(CACHE_DIR .. '\\units.json')
-    if not (statusTxt and unitsTxt) then return fail('no map data') end
-    if age and age > CONFIG.MAX_AGE_SEC then return fail('map data too old (' .. ageText(age) .. ')') end
+    if not (statusTxt and unitsTxt) then return nil, 'no map data' end
+    local age = cacheAge()
+    if age and age > CONFIG.MAX_AGE_SEC then return nil, 'map data too old (' .. ageText(age) .. ')' end
+    return { status = statusTxt, units = unitsTxt, age = age }
+end
 
-    local ok, status = pcall(JSON.decode, JSON, statusTxt)
-    local ok2, units = pcall(JSON.decode, JSON, unitsTxt)
+-- Decoded map data of the mission's map: { status, units } or nil, reason.
+local function decodeCache(cache)
+    local ok, status = pcall(JSON.decode, JSON, cache.status)
+    local ok2, units = pcall(JSON.decode, JSON, cache.units)
     if not (ok and ok2 and type(status) == 'table' and type(units) == 'table') then
-        return fail('cannot parse map data')
+        return nil, 'cannot parse map data'
     end
     if status.theatre and status.theatre ~= state.theatre then
-        return fail('map data is for ' .. tostring(status.theatre) .. ', mission map is ' .. tostring(state.theatre))
+        return nil, 'map data is for ' .. tostring(status.theatre) .. ', mission map is ' .. tostring(state.theatre)
     end
+    return { status = status, units = units }
+end
 
-    local t = getTerrain()
-    local env = {
-        terrain   = state.theatre,
-        getHeight = t and t.GetHeight,
-        toLatLon  = t and t.convertMetersToLatLon,
-        spawn     = state.spawn,
-    }
-    local okBuild, files, errors = pcall(core.build, status, units, state.side, env, aircraft, settings.OPTIONS,
-        loadBases())
-    if not okBuild then
-        warn('build failed: ' .. tostring(files))
-        return fail('build failed, see dcs.log')
-    end
-    for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
-    local failed = #errors
+-- Everything the cartridges are made from (after loadBases): the same key gives the same files.
+local function inputKey(cache)
+    local s = state.spawn
+    local spawn = s and table.concat({ tostring(s.x), tostring(s.z), tostring(s.name) }, ',') or ''
+    local stamps = {}
+    for unitType, c in pairs(baseCache) do stamps[#stamps + 1] = unitType .. '=' .. tostring(c.stamp) end
+    table.sort(stamps)
+    return table.concat({ state.side, spawn, table.concat(stamps, ' '), cache.status, cache.units }, '\n')
+end
 
-    local summary = {}
-    local written, seen = {}, {}   -- short aircraft names for the chat, e.g. "AH-64D"
-    local function statsText(stats)
-        local parts = {}
-        for k, v in pairs(stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
-        table.sort(parts)
-        return '(' .. table.concat(parts, ' ') .. ')'
+local function allExist(paths)
+    for _, p in ipairs(paths) do
+        if not fileExists(p) then return false end
     end
+    return true
+end
+
+local function statsText(stats)
+    local parts = {}
+    for k, v in pairs(stats) do parts[#parts + 1] = k .. '=' .. tostring(v) end
+    table.sort(parts)
+    return '(' .. table.concat(parts, ' ') .. ')'
+end
+
+-- Encodes and writes the core.build results. Returns log summary parts, short aircraft names
+-- for the chat (e.g. "AH-64D"), number of failed writes, written paths.
+local function writeOutputs(files)
+    local summary, written, seen, paths, failed = {}, {}, {}, {}, 0
     for _, f in ipairs(files) do
         local vtag = f.variant and ('[' .. f.variant .. ']') or ''
         if f.skip then
@@ -358,6 +357,7 @@ local function generate(final, problem)
                 okW, err = writeFileAtomic(path, text)
             end
             if okW then
+                paths[#paths + 1] = path
                 local label = f.type .. vtag .. (f.id == core.NATIVE_OUTPUT and '' or ('/' .. f.id))
                 if f.base then
                     label = label .. ' +base'
@@ -378,11 +378,16 @@ local function generate(final, problem)
             end
         end
     end
+    return summary, written, failed, paths
+end
+
+-- dcs.log line with the details and a short chat line: side, spawn base, written aircraft and
+-- notes (download problem, data age, errors).
+local function report(summary, written, failed, problem, age)
     local old = age and age > CONFIG.STALE_SEC and ('map data ' .. ageText(age) .. ' old') or nil
     local around = state.spawn and (' around ' .. tostring(state.spawn.name or 'spawn')) or ''
     info('cartridges written for ' .. state.side .. around .. (old and (', ' .. old) or '') .. ': '
         .. table.concat(summary, ', '))
-    -- short chat line, details are in dcs.log
     local where = state.spawn and state.spawn.name and (' (' .. state.spawn.name .. ')') or ''
     local msg = 'SarmatDTC: ' .. string.upper(state.side) .. ' DTC ready' .. where .. ': '
         .. (#written > 0 and table.concat(written, ', ') or 'none')
@@ -392,6 +397,55 @@ local function generate(final, problem)
     if failed > 0 then notes[#notes + 1] = failed .. ' error(s), see dcs.log' end
     if #notes > 0 then msg = msg .. ' - ' .. table.concat(notes, ', ') end
     chat(msg)
+end
+
+-- final: no download follows this attempt, so the player is told when nothing is written
+-- (an attempt from the old cache before a download stays silent). problem: why the data
+-- may be outdated ("download failed"), shown in the chat.
+local function generate(final, problem)
+    if not (state.active and state.side) then return end
+    local function fail(msg)
+        if not final then
+            info(msg .. ', waiting for the download')
+            return
+        end
+        warn(msg)
+        chat('SarmatDTC: ' .. (problem and (problem .. ', ') or '') .. msg .. ', no DTC written')
+    end
+
+    local cache, why = loadCache()
+    if not cache then return fail(why) end
+    local bases = loadBases()
+    local key = inputKey(cache)
+    -- same input as the cartridges on disk (e.g. a download that confirms the cache): no second
+    -- build and write, no chat. A download problem is news for the player, so it is not skipped.
+    if not problem and key == state.lastKey and allExist(state.lastFiles) then
+        info('map data unchanged, cartridges kept')
+        return
+    end
+    local data, whyNot = decodeCache(cache)
+    if not data then return fail(whyNot) end
+
+    local t = getTerrain()
+    local env = {
+        terrain   = state.theatre,
+        getHeight = t and t.GetHeight,
+        toLatLon  = t and t.convertMetersToLatLon,
+        spawn     = state.spawn,
+    }
+    local okBuild, files, errors, warnings = pcall(core.build, data.status, data.units, state.side, env, aircraft,
+        settings.OPTIONS, bases, CONFIG.FILE_PREFIX)
+    if not okBuild then
+        warn('build failed: ' .. tostring(files))
+        return fail('build failed, see dcs.log')
+    end
+    for _, w in ipairs(warnings) do warn('config.lua option: ' .. w) end
+    for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
+
+    local summary, written, writeFailed, paths = writeOutputs(files)
+    -- a failed write may succeed next time (locked file), so it is not remembered as done
+    state.lastKey, state.lastFiles = writeFailed == 0 and key or nil, paths
+    report(summary, written, #errors + writeFailed, problem, cache.age)
 end
 
 ------------------------------------------------------------------------------
@@ -516,5 +570,22 @@ function callbacks.onSimulationStop()
     resetState()
 end
 
-DCS.setUserCallbacks(callbacks)
+-- An error in a callback must not reach the game GUI; each distinct one is logged once
+-- (onSimulationFrame would repeat it every frame).
+local reported = {}
+local safeCallbacks = {}
+for name, fn in pairs(callbacks) do
+    safeCallbacks[name] = function(...)
+        local ok, err = pcall(fn, ...)
+        if not ok then
+            local msg = name .. ' failed: ' .. tostring(err)
+            if not reported[msg] then
+                reported[msg] = true
+                log.write(LOG_TAG, log.ERROR, msg)
+            end
+        end
+    end
+end
+
+DCS.setUserCallbacks(safeCallbacks)
 info('loaded')

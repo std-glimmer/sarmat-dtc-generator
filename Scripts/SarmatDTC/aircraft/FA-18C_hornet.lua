@@ -2,8 +2,10 @@
 -- Format: CoreMods/aircraft/FA-18C/DTC/SA/{FAOR_FLOT,MEZ_THRTS}.lua. setData copies
 -- mirror_MEZ_THRTS as is, so it is always written: false = our threats, true = the mission's.
 
+local TYPE = "FA-18C_hornet"
+
 return {
-    type = "FA-18C_hornet",
+    type = TYPE,
     base = { terrainPaths = { "WYPT", "GPS_WYPT", "TCN", "SA.CAP_PTS", "SA.CORRIDORS", "SA.FAOR_FLOT", "SA.MEZ_THRTS" } },
     options = {
         LINES        = 3,
@@ -12,6 +14,11 @@ return {
         MIN_RANGE    = 6000,    -- [m] skip short-range AD (AAA, MANPADS, SA-9/13, Avenger)
         DEDUP_M      = 5000,    -- one ring per threat type within this distance
         THREAT_LEVEL = 1,       -- 1..3
+    },
+    -- config.lua values outside these are clamped (FLOT 3 x 7, MEZ THRTS 40)
+    limits = {
+        LINES = { 1, 3, int = true }, LINE_PTS = { 2, 7, int = true }, THREATS = { 0, 40, int = true },
+        MIN_RANGE = { 0 }, DEDUP_M = { 0 }, THREAT_LEVEL = { 1, 3, int = true },
     },
 
     build = function(s, lib, opt)
@@ -33,7 +40,7 @@ return {
                 threat_level = opt.THREAT_LEVEL }
         end
 
-        local data = lib.cartridge("FA-18C_hornet", s.env)
+        local data = lib.cartridge(TYPE, s.env)
         data.SA = { FAOR_FLOT = { FAOR = {}, FLOT = flot }, mirror_MEZ_THRTS = true }
         if opt.THREATS > 0 then
             data.SA.mirror_MEZ_THRTS = false

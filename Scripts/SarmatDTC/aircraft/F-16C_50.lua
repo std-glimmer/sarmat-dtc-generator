@@ -14,8 +14,10 @@ local DEF_NUM = {
     ["SPAAA Gepard"] = 26, ["SPAAA Vulcan"] = 27, ["SPAAA ZSU-23-4"] = 28, ["SPAAA ZSU-57-2"] = 29,
 }
 
+local TYPE = "F-16C_50"
+
 return {
-    type = "F-16C_50",
+    type = TYPE,
     base = { terrainPaths = { "MPD.NAV_PTS", "MPD.DEST", "MPD.GEO_LINES", "MPD.THREAT_PTS", "MPD.VIPVRP" } },
     options = {
         POINTS    = 25,     -- GEO LINES
@@ -23,6 +25,8 @@ return {
         MIN_RANGE = 6000,   -- [m] skip short-range AD (AAA, MANPADS, SA-9/13, Avenger)
         DEDUP_M   = 5000,   -- one ring per threat type within this distance
     },
+    -- config.lua values outside these are clamped (GEO LINES 31..55, THREAT PTS 56..70)
+    limits = { POINTS = { 2, 25, int = true }, THREATS = { 0, 15, int = true }, MIN_RANGE = { 0 }, DEDUP_M = { 0 } },
 
     build = function(s, lib, opt)
         local pts = {}
@@ -41,7 +45,7 @@ return {
                 elev = lib.elevation(s.env, t.x, t.z), text = t.text, ring = true }
         end
 
-        local data = lib.cartridge("F-16C_50", s.env)
+        local data = lib.cartridge(TYPE, s.env)
         data.MPD = { terrain = s.env.terrain, mirror_GEO_LINES = false, GEO_LINES = pts }
         if opt.THREATS > 0 then
             data.MPD.mirror_THREAT_PTS = false

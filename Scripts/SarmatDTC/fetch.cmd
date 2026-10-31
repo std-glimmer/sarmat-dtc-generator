@@ -3,13 +3,14 @@ rem SarmatDTC: downloads SARMAT map data. Usage: fetch.cmd <out dir> <base url e
 rem Launched hidden by fetch.vbs ("cmd /c"); must keep CRLF line endings (goto/labels break with LF).
 rem The result goes to done-<fetch id>.flag, so a late run of an earlier fetch is not taken for this one.
 rem Worst case ~100 s per file (retries start within 60 s, each attempt <= 40 s): keep below
-rem SarmatDTC.lua FETCH_TIMEOUT.
+rem SarmatDTC.lua FETCH_TIMEOUT. HTTPS only (file:// is for the offline test, the base url is fixed
+rem in SarmatDTC.lua), redirects only to HTTPS, at most 5 MB per file (the data is parsed on the GUI thread).
 setlocal
 set "OUT=%~1"
 set "BASE=%~2"
 set "ID=%~3"
 set "CURL=%SystemRoot%\System32\curl.exe"
-set "OPTS=-s -f -L --retry 2 --retry-max-time 60 --connect-timeout 15 --max-time 40 -A SarmatDTC"
+set "OPTS=-s -f -L --retry 2 --retry-max-time 60 --connect-timeout 15 --max-time 40 --max-filesize 5M --proto =https,file --proto-redir =https -A SarmatDTC"
 
 "%CURL%" %OPTS% -o "%OUT%\status-%ID%.part" "%BASE%status.json" || goto fail
 "%CURL%" %OPTS% -o "%OUT%\units-%ID%.part" "%BASE%units.json" || goto fail

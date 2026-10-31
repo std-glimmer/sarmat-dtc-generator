@@ -42,6 +42,11 @@ return {
         OWN          = 20,
         SPAWN_WEIGHT = 0.5,     -- same priority idea as the AH-64 module
     },
+    -- config.lua values outside these are clamped (no format limits yet)
+    limits = {
+        FRONT_PTS = { 2, nil, int = true }, THREATS = { 0, nil, int = true }, TARGETS = { 0, nil, int = true },
+        OWN = { 0, nil, int = true }, MIN_RANGE = { 0 }, DEDUP_M = { 0 }, SPAWN_WEIGHT = { 0 },
+    },
 
     outputs = {
         {

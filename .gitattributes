@@ -4,3 +4,5 @@
 *.vbs text eol=crlf
 *.ps1 text eol=crlf
 *.json -diff
+# expected test output is compared byte for byte
+Scripts/SarmatDTC/tests/fixtures/expected/*.lua -text

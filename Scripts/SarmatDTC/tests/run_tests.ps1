@@ -1,13 +1,23 @@
 # Runs SarmatDTC offline tests with DCS's own Lua interpreter (bin\luae.exe, Lua 5.1).
-# usage: powershell -ExecutionPolicy Bypass -File Scripts\SarmatDTC\tests\run_tests.ps1 [-DcsDir <DCS install>] [-OutDir <dir>]
+# usage: powershell -ExecutionPolicy Bypass -File Scripts\SarmatDTC\tests\run_tests.ps1 [-DcsDir <DCS install>] [-OutDir <dir>] [-UpdateExpected]
+# DCS install: -DcsDir, else env DCS_DIR, else the path the DCS installer stores in the registry.
 param(
-    [string]$DcsDir = "G:\Program Files\Eagle Dynamics\DCS World OpenBeta",
-    [string]$OutDir = ""
+    [string]$DcsDir = "",
+    [string]$OutDir = "",
+    [switch]$UpdateExpected       # record tests\fixtures\expected\*.lua after an intended output change
 )
+$env:SDTC_UPDATE_EXPECTED = if ($UpdateExpected) { "1" } else { "" }
 $ErrorActionPreference = "Stop"
+if (-not $DcsDir) { $DcsDir = $env:DCS_DIR }
+if (-not $DcsDir) {
+    foreach ($key in "HKCU:\Software\Eagle Dynamics\DCS World OpenBeta", "HKCU:\Software\Eagle Dynamics\DCS World") {
+        $p = (Get-ItemProperty $key -ErrorAction SilentlyContinue).Path
+        if ($p) { $DcsDir = $p; break }
+    }
+}
 $scriptDir = Split-Path -Parent $PSScriptRoot          # ...\Scripts\SarmatDTC
 $luae = Join-Path $DcsDir "bin\luae.exe"
-if (-not (Test-Path $luae)) { throw "luae.exe not found: $luae (pass -DcsDir)" }
+if (-not $DcsDir -or -not (Test-Path $luae)) { throw "luae.exe not found in '$DcsDir' (pass -DcsDir or set DCS_DIR)" }
 $failed = 0
 
 # luae resolves Scripts\JSON.lua relative to the DCS install, like the game does

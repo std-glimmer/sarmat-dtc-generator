@@ -45,6 +45,13 @@ local TGT_IDS = {
 local TGT_GENERIC = 2       -- GU (Generic Air Defense Unit)
 local HOME_M = 5000         -- own FARP up to this much further from the front than the base is still "home"
 
+local TYPE        = "AH-64D_BLK_II"
+local CTRLM_FIRST = 51      -- number of the first Control Measure point (C51)
+local NOTE_LEN    = 40      -- point note, shown on the POINT page
+local TEXT_MAX_N  = 999     -- vehicle count in the 3-character free text
+local LINE_FLOT   = 4       -- Lines.lua type_num of a FLOT line
+local RANK_STEP   = 1e9     -- above any score: the CTRLM list is ordered by rank, then by score
+
 local function adNote(g)
     return g.ad .. (g.adLead and "" or (" + " .. g.type)) .. " X" .. g.count
 end
@@ -83,8 +90,178 @@ local function clusterClass(members)
     return best, total, (biggest[best] or members[1]).type
 end
 
+-- Distances and scores of one build (see Priority in the header).
+local function planner(s, lib, opt)
+    local dist = lib.dist
+    local P = {}
+    function P.frontDist(p) return lib.distToPolyline(p.x, p.z, s.front) end
+    function P.spawnDist(p) return s.spawn and opt.SPAWN_WEIGHT * dist(p, s.spawn) or 0 end
+    function P.ring(t)
+        local def = lib.THREAT_DEFS[t.ad]
+        return def and math.min(def.range, opt.RING_CAP_M) or 0
+    end
+    -- area of operations; own FARPs behind the base are not on the way to the fight
+    local baseFront = s.spawn and P.frontDist(s.spawn)
+    function P.inAO(p, reach)
+        if not s.spawn or opt.AO_DEPTH_M <= 0 then return true end
+        if p.farp and p.friendly and P.frontDist(p) > baseFront + HOME_M then return false end
+        return dist(p, s.spawn) - (reach or 0) <= baseFront + opt.AO_DEPTH_M
+    end
+    -- priority: near the front, near own spawn base, enemy first
+    function P.score(p)
+        local v = P.frontDist(p) + P.spawnDist(p)
+        if not p.friendly then v = v * opt.ENEMY_FACTOR end
+        return v
+    end
+    function P.threatScore(t) return P.frontDist(t) - P.ring(t) + P.spawnDist(t) end
+    return P
+end
+
+-- Enemy AD groups and SAM sites in the area of operations become threats, the other groups
+-- CTRLM units (own ones only near the front, own AD only with OWN_AD).
+local function candidates(s, P, opt)
+    local units, threats = {}, {}
+    for _, g in ipairs(s.groups) do
+        if g.ad and not g.friendly then
+            local t = { x = g.x, z = g.z, ad = g.ad, count = g.count, note = adNote(g) }
+            if P.inAO(t, P.ring(t)) then threats[#threats + 1] = t end
+        elseif (opt.OWN_AD or not g.ad) and P.inAO(g) and
+                not (g.friendly and opt.OWN_FRONT_M > 0 and P.frontDist(g) > opt.OWN_FRONT_M) then
+            units[#units + 1] = g
+        end
+    end
+    for _, site in ipairs(s.sites) do
+        local t = { x = site.x, z = site.z, ad = site.ad, count = 0, note = site.ad .. " SITE " .. site.name }
+        if not site.friendly and P.inAO(t, P.ring(t)) then threats[#threats + 1] = t end
+    end
+    return units, threats
+end
+
+-- CTRLM symbols: FARPs/FOBs (units of their side at them belong to them) and merged unit positions.
+-- Returns symbols { x, z, id, note, text?, farp?, friendly }, number of groups merged away.
+local function ctrlmSymbols(s, lib, P, opt, units)
+    local up, dist = lib.asciiUpper, lib.dist
+    local symbols, merged = {}, 0
+    local farps = {}
+    for _, f in ipairs(s.farps) do
+        local p = { x = f.x, z = f.z, friendly = f.friendly, farp = true, name = f.name, count = 0 }
+        if P.inAO(p) then farps[#farps + 1] = p end
+    end
+    local free = {}
+    for _, g in ipairs(lib.byScore(units, P.score)) do
+        local farp
+        for _, f in ipairs(farps) do
+            if f.friendly == g.friendly and dist(f, g) < opt.CLUSTER_M then farp = f break end
+        end
+        if farp then
+            farp.count = farp.count + g.count
+            merged = merged + 1
+        else
+            free[#free + 1] = g
+        end
+    end
+    for _, f in ipairs(farps) do
+        local defenders = (not f.friendly and f.count > 0) and (" X" .. f.count) or ""
+        symbols[#symbols + 1] = { x = f.x, z = f.z, id = CTRLM_FARP, farp = true, friendly = f.friendly,
+            note = up(f.name .. (f.friendly and " OWN" or " ENEMY") .. defenders, NOTE_LEN) }
+    end
+    local function unitKey(g) return (g.friendly and "own" or "enemy") .. (g.ad and "AD" or "") end
+    for _, c in ipairs(mergeNear(free, opt.CLUSTER_M, unitKey, dist)) do
+        local g, n = c.seed, #c.members
+        merged = merged + n - 1
+        local class, total, typeName = clusterClass(c.members)
+        local grp = n > 1 and (" " .. n .. " GRP") or ""
+        local p = { x = g.x, z = g.z, friendly = g.friendly, text = tostring(math.min(total, TEXT_MAX_N)) }
+        if g.ad then
+            p.id, p.note = CTRLM_OWN_AD, "OWN AD " .. adNote(g) .. grp
+        else
+            local ids = CTRLM_IDS[class]
+            p.id = g.friendly and ids[1] or ids[2]
+            p.note = (g.friendly and "OWN " or "ENEMY ") .. CLASS_NAMES[class] .. " X" .. total .. grp .. " " .. typeName
+        end
+        p.note = up(p.note, NOTE_LEN)
+        symbols[#symbols + 1] = p
+    end
+    return symbols, merged
+end
+
+-- Up to opt.CTRLM symbols by priority (opt.CTRLM_FARPS reserves slots for FARPs), in the order
+-- of the TSD CTRLM list: own FARPs, enemy, own units.
+local function selectCtrlm(lib, P, opt, symbols)
+    local selected
+    if opt.CTRLM_FARPS then
+        local farpPts, others = {}, {}
+        for _, p in ipairs(symbols) do
+            if p.farp then farpPts[#farpPts + 1] = p else others[#others + 1] = p end
+        end
+        selected = lib.byScore(farpPts, P.score, math.min(opt.CTRLM_FARPS, opt.CTRLM))
+        for _, p in ipairs(lib.byScore(others, P.score, opt.CTRLM - #selected)) do selected[#selected + 1] = p end
+    else
+        selected = lib.byScore(symbols, P.score, opt.CTRLM)
+    end
+    return lib.byScore(selected, function(p)
+        local rank = (p.farp and p.friendly) and 0 or (p.friendly and 2 or 1)
+        return rank * RANK_STEP + P.score(p)
+    end)
+end
+
+-- CTRLM points C51.. Free text: vehicle count for units, F01../E01.. for own/enemy FARPs.
+-- Returns points, counts { farpOwn, farpEnemy, enemy }.
+local function ctrlmPoints(s, lib, selected)
+    local pts, n = {}, { farpOwn = 0, farpEnemy = 0, enemy = 0 }
+    for i, p in ipairs(selected) do
+        local text = p.text
+        if p.farp then
+            if p.friendly then n.farpOwn = n.farpOwn + 1; text = string.format("F%02d", n.farpOwn)
+            else n.farpEnemy = n.farpEnemy + 1; text = string.format("E%02d", n.farpEnemy) end
+        end
+        if not p.friendly then n.enemy = n.enemy + 1 end
+        pts[i] = { alt = lib.elevation(s.env, p.x, p.z), id = p.id, note = p.note, num = CTRLM_FIRST - 1 + i,
+            text = text, x = lib.round(p.x), y = lib.round(p.z) }
+    end
+    return pts, n
+end
+
+-- TGT points T01.. (up to opt.TGT): one per AD type within CLUSTER_M, by threat priority.
+-- Returns points, number of threats merged away.
+local function tgtPoints(s, lib, P, opt, threats)
+    local merged, kept = 0, {}
+    for _, c in ipairs(mergeNear(lib.byScore(threats, P.threatScore), opt.CLUSTER_M,
+            function(t) return t.ad end, lib.dist)) do
+        local t, n = c.seed, #c.members
+        merged = merged + n - 1
+        if n > 1 then
+            local total = 0
+            for _, m in ipairs(c.members) do total = total + m.count end
+            t.note = t.ad .. (total > 0 and (" X" .. total) or "") .. " " .. n .. " GRP"
+        end
+        kept[#kept + 1] = t
+    end
+    local pts = {}
+    for i = 1, math.min(opt.TGT, #kept) do
+        local p = kept[i]
+        pts[i] = { alt = lib.elevation(s.env, p.x, p.z), id = TGT_IDS[p.ad] or TGT_GENERIC,
+            note = lib.asciiUpper(p.note, NOTE_LEN), num = i, text = string.format("T%02d", i),
+            x = lib.round(p.x), y = lib.round(p.z) }
+    end
+    return pts, merged
+end
+
+-- The front line as chained FLOT lines.
+local function flotLines(s, lib, opt)
+    local lines = {}
+    if #s.front >= 2 then
+        for _, seg in ipairs(lib.chain(s.front, opt.LINES, opt.LINE_PTS)) do
+            local vertices = {}
+            for j, p in ipairs(seg) do vertices[j] = { x = lib.round(p.x), y = lib.round(p.z) } end
+            lines[#lines + 1] = { note = "FRONT", text = "", type_num = LINE_FLOT, vertices = vertices }
+        end
+    end
+    return lines
+end
+
 return {
-    type = "AH-64D_BLK_II",
+    type = TYPE,
     base = { terrainPaths = { "NAV" } },   -- config.lua BASE_DTC: map-bound sections of the base file
     options = {
         CTRLM       = 49,   -- C51..C99
@@ -100,6 +277,13 @@ return {
         OWN_AD       = false, -- show own air defence groups (AD symbol)
         RING_CAP_M   = 15000, -- [m] threat ring counted for TGT priority (radar horizon of a low helicopter)
     },
+    -- config.lua values outside these are clamped (Points.lua / Lines.lua limits)
+    limits = {
+        CTRLM = { 0, 49, int = true }, CTRLM_FARPS = { 0, 49, int = true }, TGT = { 0, 50, int = true },
+        LINES = { 0, 15, int = true }, LINE_PTS = { 2, 4, int = true },
+        SPAWN_WEIGHT = { 0 }, ENEMY_FACTOR = { 0 }, AO_DEPTH_M = { 0 }, CLUSTER_M = { 0 },
+        OWN_FRONT_M = { 0 }, RING_CAP_M = { 0 },
+    },
 
     -- config.lua OPTIONS["AH-64D_BLK_II"] = { variant = "..." }; a variant without its own build
     -- uses the build below with its options, e.g. theater = { options = { TGT = 50, AO_DEPTH_M = 0 } }
@@ -109,147 +293,14 @@ return {
     },
 
     build = function(s, lib, opt)
-        local env, up, dist = s.env, lib.asciiUpper, lib.dist
-        local function frontDist(p) return lib.distToPolyline(p.x, p.z, s.front) end
-        local function spawnDist(p) return s.spawn and opt.SPAWN_WEIGHT * dist(p, s.spawn) or 0 end
-        local function ring(t)
-            local def = lib.THREAT_DEFS[t.ad]
-            return def and math.min(def.range, opt.RING_CAP_M) or 0
-        end
-        -- area of operations; own FARPs behind the base are not on the way to the fight
-        local baseFront = s.spawn and frontDist(s.spawn)
-        local function inAO(p, reach)
-            if not s.spawn or opt.AO_DEPTH_M <= 0 then return true end
-            if p.farp and p.friendly and frontDist(p) > baseFront + HOME_M then return false end
-            return dist(p, s.spawn) - (reach or 0) <= baseFront + opt.AO_DEPTH_M
-        end
+        local P = planner(s, lib, opt)
+        local units, threats = candidates(s, P, opt)
+        local symbols, mergedUnits = ctrlmSymbols(s, lib, P, opt, units)
+        local ctrlmPts, n = ctrlmPoints(s, lib, selectCtrlm(lib, P, opt, symbols))
+        local tgtPts, mergedThreats = tgtPoints(s, lib, P, opt, threats)
+        local lines = flotLines(s, lib, opt)
 
-        -- priority: near the front, near own spawn base, enemy first
-        local function score(p)
-            local v = frontDist(p) + spawnDist(p)
-            if not p.friendly then v = v * opt.ENEMY_FACTOR end
-            return v
-        end
-        local function threatScore(t) return frontDist(t) - ring(t) + spawnDist(t) end
-
-        -- candidates
-        local units, threats = {}, {}
-        for _, g in ipairs(s.groups) do
-            if g.ad and not g.friendly then
-                local t = { x = g.x, z = g.z, ad = g.ad, count = g.count, note = adNote(g) }
-                if inAO(t, ring(t)) then threats[#threats + 1] = t end
-            elseif (opt.OWN_AD or not g.ad) and inAO(g) and
-                    not (g.friendly and opt.OWN_FRONT_M > 0 and frontDist(g) > opt.OWN_FRONT_M) then
-                units[#units + 1] = g
-            end
-        end
-        for _, site in ipairs(s.sites) do
-            local t = { x = site.x, z = site.z, ad = site.ad, count = 0, note = site.ad .. " SITE " .. site.name }
-            if not site.friendly and inAO(t, ring(t)) then threats[#threats + 1] = t end
-        end
-
-        -- CTRLM: units at a FARP/FOB of their side belong to it, the rest merge by position
-        local ctrlm, merged = {}, 0
-        local farps = {}
-        for _, f in ipairs(s.farps) do
-            local p = { x = f.x, z = f.z, friendly = f.friendly, farp = true, name = f.name, count = 0 }
-            if inAO(p) then farps[#farps + 1] = p end
-        end
-        local free = {}
-        for _, g in ipairs(lib.byScore(units, score)) do
-            local farp
-            for _, f in ipairs(farps) do
-                if f.friendly == g.friendly and dist(f, g) < opt.CLUSTER_M then farp = f break end
-            end
-            if farp then
-                farp.count = farp.count + g.count
-                merged = merged + 1
-            else
-                free[#free + 1] = g
-            end
-        end
-        for _, f in ipairs(farps) do
-            local defenders = (not f.friendly and f.count > 0) and (" X" .. f.count) or ""
-            ctrlm[#ctrlm + 1] = { x = f.x, z = f.z, id = CTRLM_FARP, farp = true, friendly = f.friendly,
-                note = up(f.name .. (f.friendly and " OWN" or " ENEMY") .. defenders, 40) }
-        end
-        local function unitKey(g) return (g.friendly and "own" or "enemy") .. (g.ad and "AD" or "") end
-        for _, c in ipairs(mergeNear(free, opt.CLUSTER_M, unitKey, dist)) do
-            local g, n = c.seed, #c.members
-            merged = merged + n - 1
-            local class, total, typeName = clusterClass(c.members)
-            local grp = n > 1 and (" " .. n .. " GRP") or ""
-            local p = { x = g.x, z = g.z, friendly = g.friendly, text = tostring(math.min(total, 999)) }
-            if g.ad then
-                p.id, p.note = CTRLM_OWN_AD, "OWN AD " .. adNote(g) .. grp
-            else
-                local ids = CTRLM_IDS[class]
-                p.id = g.friendly and ids[1] or ids[2]
-                p.note = (g.friendly and "OWN " or "ENEMY ") .. CLASS_NAMES[class] .. " X" .. total .. grp .. " " .. typeName
-            end
-            p.note = up(p.note, 40)
-            ctrlm[#ctrlm + 1] = p
-        end
-
-        local selected
-        if opt.CTRLM_FARPS then
-            local farpPts, others = {}, {}
-            for _, p in ipairs(ctrlm) do
-                if p.farp then farpPts[#farpPts + 1] = p else others[#others + 1] = p end
-            end
-            selected = lib.byScore(farpPts, score, math.min(opt.CTRLM_FARPS, opt.CTRLM))
-            for _, p in ipairs(lib.byScore(others, score, opt.CTRLM - #selected)) do selected[#selected + 1] = p end
-        else
-            selected = lib.byScore(ctrlm, score, opt.CTRLM)
-        end
-        -- list order for the TSD CTRLM page: own FARPs, enemy, own units
-        selected = lib.byScore(selected, function(p)
-            local rank = (p.farp and p.friendly) and 0 or (p.friendly and 2 or 1)
-            return rank * 1e9 + score(p)
-        end)
-
-        local ctrlmPts, tgtPts = {}, {}
-        local farpOwn, farpEnemy, enemy = 0, 0, 0
-        for i, p in ipairs(selected) do
-            local text = p.text
-            if p.farp then
-                if p.friendly then farpOwn = farpOwn + 1; text = string.format("F%02d", farpOwn)
-                else farpEnemy = farpEnemy + 1; text = string.format("E%02d", farpEnemy) end
-            end
-            if not p.friendly then enemy = enemy + 1 end
-            ctrlmPts[i] = { alt = lib.elevation(env, p.x, p.z), id = p.id, note = p.note, num = 50 + i, text = text,
-                x = lib.round(p.x), y = lib.round(p.z) }
-        end
-
-        -- TGT: one point per AD type and site
-        local threatPts = {}
-        for _, c in ipairs(mergeNear(lib.byScore(threats, threatScore), opt.CLUSTER_M,
-                function(t) return t.ad end, dist)) do
-            local t, n = c.seed, #c.members
-            merged = merged + n - 1
-            if n > 1 then
-                local total = 0
-                for _, m in ipairs(c.members) do total = total + m.count end
-                t.note = t.ad .. (total > 0 and (" X" .. total) or "") .. " " .. n .. " GRP"
-            end
-            threatPts[#threatPts + 1] = t
-        end
-        for i = 1, math.min(opt.TGT, #threatPts) do
-            local p = threatPts[i]
-            tgtPts[i] = { alt = lib.elevation(env, p.x, p.z), id = TGT_IDS[p.ad] or TGT_GENERIC, note = up(p.note, 40),
-                num = i, text = string.format("T%02d", i), x = lib.round(p.x), y = lib.round(p.z) }
-        end
-
-        local lines = {}
-        if #s.front >= 2 then
-            for _, seg in ipairs(lib.chain(s.front, opt.LINES, opt.LINE_PTS)) do
-                local vertices = {}
-                for j, p in ipairs(seg) do vertices[j] = { x = lib.round(p.x), y = lib.round(p.z) } end
-                lines[#lines + 1] = { note = "FRONT", text = "", type_num = 4, vertices = vertices } -- 4 = FLOT
-            end
-        end
-
-        local data = lib.cartridge("AH-64D_BLK_II", env)
+        local data = lib.cartridge(TYPE, s.env)
         data.NAV = {
             MissionFile = 1,
             Mission_1 = {
@@ -260,7 +311,7 @@ return {
                 Lines = lines,
             },
         }
-        return data, { ctrlm = #ctrlmPts, enemy = enemy, farps = farpOwn + farpEnemy, tgt = #tgtPts,
-            lines = #lines, merged = merged }
+        return data, { ctrlm = #ctrlmPts, enemy = n.enemy, farps = n.farpOwn + n.farpEnemy, tgt = #tgtPts,
+            lines = #lines, merged = mergedUnits + mergedThreats }
     end,
 }

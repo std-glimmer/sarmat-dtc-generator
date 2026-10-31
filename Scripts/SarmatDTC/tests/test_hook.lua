@@ -18,13 +18,17 @@ local function exists(p)
     return false
 end
 
-local mtime = {}   -- [path] = fake modification time (default: now)
+local mtime = {}       -- [path] = fake modification time set by a test case
+local firstSeen = {}   -- otherwise: time of the first query, stable like a real file time
 package.loaded['lfs'] = {
     writedir = function() return writedir end,
     mkdir = function(p) os.execute('mkdir "' .. p .. '" 2>nul') end,
     attributes = function(p, key)
         if not exists(p) then return nil end
-        if key == 'modification' then return mtime[p] or os.time() end
+        if key == 'modification' then
+            firstSeen[p] = firstSeen[p] or os.time()
+            return mtime[p] or firstSeen[p]
+        end
         return 'file'
     end,
     dir = function(p)
@@ -315,6 +319,31 @@ cb.onSimulationFrame()
 check(logged('^download timed out'), 'timeout not logged')
 check(#chats == n + 2 and chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download timed out',
     'timeout chat: ' .. tostring(chats[#chats]))
+
+print('-- download confirms the cache: no second build and write, no chat')
+download = 'ok'
+local stamp = io.popen('dir /T:W "' .. ah64Path .. '" | find "SARMAT"'):read('*a')
+n = retake()
+check(#chats == n, 'unchanged input written again: ' .. tostring(chats[#chats]))
+check(frames(30) and logged('^map data downloaded'), 'download did not finish')
+check(#chats == n and logged('^map data unchanged, cartridges kept'), 'confirmed cache not skipped')
+check(io.popen('dir /T:W "' .. ah64Path .. '" | find "SARMAT"'):read('*a') == stamp, 'cartridge rewritten')
+
+print('-- a deleted cartridge is written again')
+os.remove(ah64Path)
+n = retake()
+check(#chats == n + 1 and exists(ah64Path), 'deleted cartridge not written again')
+check(frames(30), 'download did not finish')
+check(#chats == n + 1, 'second write after a confirming download')
+
+print('-- an error in a callback stays in the hook and is logged once')
+local realId = net.get_my_player_id
+net.get_my_player_id = function() error('api broken') end
+local okCb = pcall(cb.onPlayerChangeSlot, 7) and pcall(cb.onPlayerChangeSlot, 7)
+net.get_my_player_id = realId
+local errLogs = 0
+for _, l in ipairs(logs) do if string.find(l, '^onPlayerChangeSlot failed: .*api broken') then errLogs = errLogs + 1 end end
+check(okCb and errLogs == 1, 'callback error escaped or not logged once (' .. errLogs .. ')')
 
 print('-- no temporary files left next to the cartridges')
 for _, f in ipairs(listDir(dtcDir)) do
