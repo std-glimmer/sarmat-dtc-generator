@@ -45,14 +45,15 @@ Apache получает не всю карту, а то, что важно дл�
 
 ## Требования
 
-- Windows 10/11 (используется встроенный `curl.exe`);
+- Windows 10/11 x64 (карта скачивается по HTTPS прямо из DCS: LuaSec в `Scripts\SarmatDTC\lib`);
 - DCS World (Сирия или Кавказ), сервер с **SARMAT** в названии.
 
 ## Установка
 
 1. Найдите папку DCS в `Saved Games`: та, где есть `Logs\dcs.log`. Обычно это
    `%USERPROFILE%\Saved Games\DCS\` (DCS 2.9+) или `%USERPROFILE%\Saved Games\DCS.openbeta\`.
-2. Скопируйте в неё папку `Scripts` из репозитория (с объединением папок).
+2. Скопируйте в неё папку `Scripts` из репозитория (с объединением папок) или распакуйте туда
+   готовый архив: Actions → `package` → нужный запуск → артефакт `SarmatDTC-<версия>-<коммит>`.
 3. Запустите DCS. В `Logs\dcs.log` должна появиться строка `SARMAT.DTC ... loaded, version ...`.
 
 **Обновление** — скопируйте `Scripts` заново. Ваш `config.user.lua` сохранится: его нет в поставке.
@@ -175,22 +176,22 @@ return {
 |---|---|
 | Нет строки `loaded, version` | Мод не установлен в ту папку `Saved Games` (см. [Установка](#установка)) |
 | Нет сообщения в чате | В названии сервера нет «SARMAT», выбран слот зрителя или модуль не в `AIRCRAFT` |
-| `download failed (...: curl exit 28, timeout)` | Сайт карты не ответил; повторите выбор слота через минуту |
+| `download failed (...: timeout)`, `HTTP 5xx`, `host not found` | Сайт карты не ответил; повторите выбор слота через минуту |
+| `download failed (...: TLS handshake failed (certificate verify failed))` | Сертификат сайта не проверился: антивирус/прокси подменяет HTTPS, или устарел `lib\cacert.pem` (обновите мод) |
+| `HTTPS unavailable, map data cannot be downloaded: ...` | Не загрузился `lib\ssl.dll` (антивирус удалил или заблокировал файл, мод скопирован не полностью) — причина в той же строке |
 | `base DTC is for another map, not used` | Базовый картридж сделан на другой карте, его навигация пропущена |
 | `config.lua option: ... out of range` | Опция вне границ, использовано ближайшее допустимое значение |
 
-Ручная проверка загрузки (из папки `Saved Games\DCS.openbeta`):
-
-```powershell
-wscript //B //Nologo Scripts\SarmatDTC\fetch.vbs https://baikalprimestudio.com/data/
-```
-
-Результат — `Scripts\SarmatDTC\cache\done-manual.flag` (`ok` или `fail <файл> <код curl>`).
+Успешная загрузка выглядит в логе так: `HTTPS: LuaSec 1.3.2 from ...`, `downloading https://...`,
+`map data downloaded in 2 s`. Если путь профиля содержит кириллицу, `ssl.dll` и `cacert.pem` копируются
+в `C:\ProgramData\SarmatDTC\` (Windows не загружает DLL по такому пути) — это нормально.
 
 > **Безопасность.** `config.lua`, `config.user.lua` и файлы в `aircraft/` — код на Lua, который DCS
 > выполняет с полным доступом к системе. Не кладите модули от незнакомых людей и не вставляйте чужой
 > `config.user.lua`, не прочитав его. Данные сайта кодом не являются: они только разбираются как JSON,
-> битые записи пропускаются, ответ больше 5 МБ не принимается.
+> битые записи пропускаются, ответ больше 5 МБ не принимается. Загрузка — только по HTTPS
+> с проверкой сертификата и имени сайта. `lib\ssl.dll` — сборка открытых LuaSec и OpenSSL
+> (`lib\VERSIONS.txt`), собранная в GitHub Actions этого репозитория.
 
 ---
 
@@ -208,7 +209,8 @@ API модуля — в [`aircraft/_template.lua`](Scripts/SarmatDTC/aircraft/_t
 | `Scripts/SarmatDTC/SarmatDTC_core.lua` | Библиотека без DCS: данные карты → `situation`, классификация юнитов и ПВО, геометрия, загрузка и запуск модулей, базовый картридж |
 | `Scripts/SarmatDTC/aircraft/<type>.lua` | Один файл на модуль DCS, подхватывается автоматически (`_*.lua` пропускаются) |
 | `Scripts/SarmatDTC/config.lua` | Настройки по умолчанию; поверх — `config.user.lua` игрока |
-| `Scripts/SarmatDTC/fetch.vbs`, `fetch.cmd` | Фоновая загрузка `status.json`/`units.json` через `curl.exe` (CRLF!) |
+| `Scripts/SarmatDTC/SarmatDTC_http.lua` | Неблокирующий HTTPS GET (LuaSocket DCS + LuaSec), шаг за кадр; загрузка LuaSec |
+| `Scripts/SarmatDTC/lib/` | LuaSec: `ssl.dll`, `ssl.lua`, `cacert.pem`. Окончательная сборка (как собрана — `lib/VERSIONS.txt`) |
 | `Scripts/SarmatDTC/tests/` | Офлайн-тесты, фикстуры (снимок карты, Сирия) и эталоны |
 
 `.gitignore` — allowlist: репозиторий лежит в самой папке `Saved Games\DCS.openbeta`, новый файл
@@ -217,8 +219,8 @@ API модуля — в [`aircraft/_template.lua`](Scripts/SarmatDTC/aircraft/_t
 ## Поток данных
 
 ```
-onMissionLoadEnd ── сервер SARMAT? ──► fetch.vbs → fetch.cmd → curl ──► cache/*-<id>.part + done-<id>.flag
-onSimulationFrame ── флаг ok ──► status.json + units.json (ставятся на место парой)
+onMissionLoadEnd ── сервер SARMAT? ──► SarmatDTC_http: 2 HTTPS-запроса (LuaSocket + lib/ssl.dll)
+onSimulationFrame ── шаг запросов (не ждёт сеть) ──► оба ответа JSON? ──► status.json + units.json (парой)
 onPlayerChangeSlot ── сторона, база спавна ──► generate:
     loadCache → inputKey (без изменений — выход) → decodeCache → core.situation()
       → aircraft/<type>.lua: build → "dcs-dtc" (+ BASE_DTC), outputs → другие форматы
@@ -254,13 +256,17 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
 
 - `test_core.lua` — ядро и все модули: лимиты, сцепка линий, варианты, `limits` опций, битые данные,
   побайтное сравнение с эталонами `tests/fixtures/expected/`.
-- `test_hook.lua` — `SarmatDTC.lua` с заглушками API DCS и реальной цепочкой `wscript → cmd → curl`
-  по `file://`, из папки с кириллицей в пути.
+- `test_http.lua` — HTTPS-клиент на фейковой сети (`fake_net.lua`): куски, повторы, редиректы, лимиты, сертификат.
+- `test_hook.lua` — `SarmatDTC.lua` с заглушками API DCS, загрузка через фейковую сеть, из папки с кириллицей в пути.
+- `-Tls` — загрузить настоящий `lib\ssl.dll` в `luae.exe`; `-Online` — и скачать `status.json` один раз.
 
 Интерпретатор — `bin\luae.exe` из установки DCS (Lua 5.1). Тесты не запускают саму игру: изменения
 в колбэках проверяйте на сервере по `dcs.log`. Сайт карты при отладке не нагружайте — есть фикстуры.
 
 ## Выпуск
 
-Поднять `VERSION` в `SarmatDTC.lua` (видна в `dcs.log` игрока), прогнать тесты, проверить `file fetch.cmd`
-(должен быть CRLF).
+Поднять `VERSION` в `SarmatDTC.lua` (видна в `dcs.log` игрока), прогнать тесты (`-Online` один раз),
+закоммитить и запушить. Workflow `package` на каждый пуш проверяет, что `lib/` на месте, и выкладывает
+мод артефактом `SarmatDTC-<версия>-<коммит>` (Actions → запуск → Artifacts). Состав — `git archive`
+коммита без путей `export-ignore` из `.gitattributes` (тесты, CI, AGENTS.md). Релизы GitHub не публикуются,
+`lib/` больше не пересобирается.

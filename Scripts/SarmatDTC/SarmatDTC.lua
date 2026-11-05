@@ -2,7 +2,8 @@
 -- when connected to a multiplayer server whose name contains "SARMAT".
 -- Loaded from Scripts/Hooks/SarmatDTC-hook.lua (DCS GUI environment).
 --
--- Flow: mission loaded on a SARMAT server -> map data is downloaded in background (fetch.vbs -> fetch.cmd -> curl.exe);
+-- Flow: mission loaded on a SARMAT server -> map data is downloaded over HTTPS in the background
+-- (SarmatDTC_http.lua: LuaSocket of DCS + LuaSec from lib/, stepped every frame, never blocks);
 -- player takes a slot -> cartridges are written for the slot's coalition (and rewritten when
 -- the fresh download finishes). Files: Saved Games/DCS.openbeta/DTC/SARMAT_<type>.dtc
 -- One cartridge per module in Scripts/SarmatDTC/aircraft/*.lua (see aircraft/_template.lua).
@@ -15,7 +16,7 @@ local CONFIG = {
     DATA_PATH     = { Syria = "data/", Caucasus = "k/data/" },
     FILE_PREFIX   = "SARMAT_",
     REFETCH_SEC   = 60,            -- reuse downloaded data if younger than this
-    FETCH_TIMEOUT = 240,           -- above fetch.cmd's worst case (~200 s), or runs could overlap
+    FETCH_TIMEOUT = 150,           -- s, whole download; above SarmatDTC_http's worst case (~130 s)
     STALE_SEC     = 600,           -- cached map data older than this: its age is shown in the chat
     MAX_AGE_SEC   = 3 * 3600,      -- cached map data older than this is not used
     SHOW_CHAT     = true,          -- local-only chat notification after writing cartridges
@@ -24,10 +25,12 @@ local CONFIG = {
 -- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua,
 -- user changes in config.user.lua (see readConfig)
 
-local VERSION   = '1.1.1'          -- in dcs.log: which version a player runs
+local VERSION   = '1.2.0'          -- in dcs.log: which version a player runs
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
+local LIB_DIR   = BASE_DIR .. 'lib\\'   -- LuaSec: ssl.dll, ssl.lua, cacert.pem
+local MAP_FILES = { 'status', 'units' }
 
 -- not dofile: it cannot open UTF-8 paths (Cyrillic user name), io.open can (see core.loadFile)
 local function loadFile(path)
@@ -37,6 +40,7 @@ local function loadFile(path)
     return assert(loadstring(text, '@' .. path))()
 end
 local core = loadFile(BASE_DIR .. 'SarmatDTC_core.lua')
+local http = loadFile(BASE_DIR .. 'SarmatDTC_http.lua')
 local JSON = dofile('Scripts/JSON.lua')   -- relative to the DCS install
 local Terrain = nil
 
@@ -114,16 +118,20 @@ loadSettings()
 
 local state = {}
 
+-- Stops a running download: its connections are closed, nothing of it is written.
+local function cancelFetch()
+    for _, req in pairs(state.fetch and state.fetch.reqs or {}) do req:close() end
+    state.fetch = nil
+end
+
 local function resetState()
+    cancelFetch()
     state = {
         active     = false,
         theatre    = nil,
         side       = nil,     -- "red" / "blue" of own slot
-        fetching   = false,
-        fetchId    = nil,     -- id of the running download, its result is cache/done-<id>.flag
-        fetchStart = 0,
+        fetch      = nil,     -- running download: { reqs, bodies, start }
         fetchedAt  = nil,     -- real time of last successful download
-        nextPoll   = 0,
         spawn      = nil,     -- {x, z, name} of own slot's start base, if known
         lastKey    = nil,     -- input of the cartridges on disk (inputKey), nil after a failed write
         lastFiles  = {},      -- their paths
@@ -585,14 +593,24 @@ end
 -- background download
 ------------------------------------------------------------------------------
 
-local fetchSeq = 0   -- not reset with the state: ids stay unique for the whole DCS session
+-- LuaSocket + LuaSec + TLS context, loaded on the first download of the DCS session:
+-- { socket, ssl, context } or nil (tlsError says why).
+local tls, tlsError = nil, nil
 
-local function flagPath(id)
-    return CACHE_DIR .. '\\done-' .. id .. '.flag'
+local function getTls()
+    if tls or tlsError then return tls end
+    local ok, t, note = pcall(http.loadTls, LIB_DIR, VERSION, core.loadFile, lfs.mkdir)
+    if ok then
+        tls = t
+        info('HTTPS: ' .. tostring(note))
+    else
+        tlsError = tostring(t)
+        warn('HTTPS unavailable, map data cannot be downloaded: ' .. tlsError)
+    end
+    return tls
 end
 
--- Result flags and downloaded parts of earlier fetches (and done.flag of old versions) are removed
--- before a new one; a part a late fetch still writes is locked and stays until the next time.
+-- Result files of the curl downloads of older versions (done*.flag, *.part) are removed.
 local function removeLeftovers()
     pcall(function()
         for f in lfs.dir(CACHE_DIR) do
@@ -603,35 +621,28 @@ local function removeLeftovers()
     end)
 end
 
--- Puts the pair downloaded by fetch `id` in place of cache/status.json + units.json. Done here, on
--- the GUI thread, so the pair is never read half-updated and a late earlier fetch never replaces it.
-local function promoteParts(id)
-    local names = { 'status', 'units' }
-    for _, n in ipairs(names) do
-        if not fileExists(CACHE_DIR .. '\\' .. n .. '-' .. id .. '.part') then return false, n .. '.json missing' end
+-- Puts the downloaded pair in place of cache/status.json + units.json: both are written to .part
+-- first, so a failed write leaves the old pair and the pair is never half-updated.
+local function storeMapData(bodies)
+    for _, n in ipairs(MAP_FILES) do
+        -- an error page or a captive portal is not JSON: keep the old data
+        if not string.match(bodies[n], '^%s*{') then return false, n .. '.json is not JSON' end
     end
-    for _, n in ipairs(names) do
+    for _, n in ipairs(MAP_FILES) do
+        local ok, err = writeVerified(CACHE_DIR .. '\\' .. n .. '.part', bodies[n])
+        if not ok then return false, n .. '.json: ' .. string.gsub(err, '%.tmp', '.part') end
+    end
+    for _, n in ipairs(MAP_FILES) do
         local target = CACHE_DIR .. '\\' .. n .. '.json'
         os.remove(target)
-        local ok, err = os.rename(CACHE_DIR .. '\\' .. n .. '-' .. id .. '.part', target)
-        if not ok then return false, tostring(err) end
+        local ok, err = os.rename(CACHE_DIR .. '\\' .. n .. '.part', target)
+        if not ok then return false, n .. '.json: ' .. tostring(err) end
     end
     return true
 end
 
-local CURL_ERRORS = { [6] = 'host not found', [7] = 'cannot connect', [22] = 'HTTP error', [28] = 'timeout',
-    [35] = 'TLS error', [60] = 'bad certificate', [63] = 'file too big' }
-
--- "fail units.json 28" -> "units.json: curl exit 28, timeout"
-local function failText(result)
-    local file, rc = string.match(result, '^fail (%S+) (%d+)')
-    if not file then return 'no details' end
-    local known = CURL_ERRORS[tonumber(rc)]
-    return file .. ': curl exit ' .. rc .. (known and (', ' .. known) or '')
-end
-
 local function startFetch()
-    if state.fetching then return end
+    if state.fetch then return end
     if state.fetchedAt and now() - state.fetchedAt < CONFIG.REFETCH_SEC then
         generate(true)
         return
@@ -642,49 +653,53 @@ local function startFetch()
         if state.side then chat('SarmatDTC: no SARMAT map data for terrain ' .. tostring(state.theatre)) end
         return
     end
-    lfs.mkdir(CACHE_DIR)
-    removeLeftovers()
-    fetchSeq = fetchSeq + 1
-    local id = os.time() .. '-' .. fetchSeq
-    -- fetch.vbs starts fetch.cmd (curl.exe) in a hidden window and returns at once; it writes
-    -- into CACHE_DIR. DCS's os.execute silently drops commands longer than ~256 chars.
-    local cmd = string.format('wscript.exe //B //Nologo "%sfetch.vbs" "%s" %s', BASE_DIR, CONFIG.SITE .. path, id)
-    if #cmd > 250 then warn('download command may be too long for os.execute (' .. #cmd .. ' chars)') end
-    local ok, err = pcall(os.execute, cmd)
-    if not ok then
-        warn('cannot start download: ' .. tostring(err))
+    local t = getTls()
+    if not t then
+        generate(true, 'download unavailable')   -- the old cache, if any; the reason is in dcs.log
         return
     end
-    state.fetching = true
-    state.fetchId = id
-    state.fetchStart = now()
+    lfs.mkdir(CACHE_DIR)
+    removeLeftovers()
+    local reqs = {}
+    for _, n in ipairs(MAP_FILES) do
+        reqs[n] = http.get(CONFIG.SITE .. path .. n .. '.json', { socket = t.socket, ssl = t.ssl, context = t.context })
+    end
+    state.fetch = { reqs = reqs, bodies = {}, start = now() }
     info('downloading ' .. CONFIG.SITE .. path)
 end
 
+-- Every frame while downloading: a step only does what the sockets allow without waiting.
 local function pollFetch()
-    if not state.fetching then return end
-    local flag = flagPath(state.fetchId)
-    if fileExists(flag) then
-        state.fetching = false
-        local result = readFile(flag) or ''
-        os.remove(flag)
-        local ok, why = false, failText(result)
-        if string.match(result, '^ok') then
-            ok, why = promoteParts(state.fetchId)
-            why = why and ('cannot put the data in place: ' .. why)
-        end
-        if ok then
-            state.fetchedAt = now()
-            info('map data downloaded')
-            generate(true)
-        else
-            warn('download failed (' .. why .. '), using previous data if any')
-            generate(true, 'download failed')
-        end
-    elseif now() - state.fetchStart > CONFIG.FETCH_TIMEOUT then
-        state.fetching = false
+    local f = state.fetch
+    local t = now()
+    if t - f.start > CONFIG.FETCH_TIMEOUT then
+        cancelFetch()
         warn('download timed out, using previous data if any')
-        generate(true, 'download timed out')
+        return generate(true, 'download timed out')
+    end
+    local pending = false
+    for _, n in ipairs(MAP_FILES) do
+        if not f.bodies[n] then
+            local done, value = f.reqs[n]:step(t)
+            if done == false then
+                cancelFetch()
+                warn('download failed (' .. n .. '.json: ' .. tostring(value) .. '), using previous data if any')
+                return generate(true, 'download failed')
+            end
+            f.bodies[n] = value
+            pending = pending or done == nil
+        end
+    end
+    if pending then return end
+    state.fetch = nil
+    local ok, why = storeMapData(f.bodies)
+    if ok then
+        state.fetchedAt = now()
+        info('map data downloaded in ' .. math.floor(t - f.start + 0.5) .. ' s')
+        generate(true)
+    else
+        warn('download failed (cannot put the data in place: ' .. tostring(why) .. '), using previous data if any')
+        generate(true, 'download failed')
     end
 end
 
@@ -728,10 +743,7 @@ end
 
 function callbacks.onSimulationFrame()
     if not state.active then return end
-    if state.fetching and now() >= state.nextPoll then
-        state.nextPoll = now() + 1
-        pollFetch()
-    end
+    if state.fetch then pollFetch() end
 end
 
 function callbacks.onSimulationStop()

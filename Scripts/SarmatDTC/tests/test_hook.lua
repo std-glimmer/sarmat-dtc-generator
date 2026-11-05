@@ -1,10 +1,11 @@
 -- Integration test of SarmatDTC.lua with stubbed DCS GUI API (DCS, net, log, lfs, terrain).
--- The download really runs (wscript -> fetch.cmd -> curl.exe) against a file:// copy of the fixtures.
--- usage: luae.exe test_hook.lua <fake writedir without trailing \> <file:// base url of data dir>
--- Keep writedir short: DCS's os.execute drops commands longer than ~256 chars.
+-- The download runs through SarmatDTC_http.lua over a fake LuaSocket/LuaSec (fake_net.lua) that
+-- serves the fixtures, so the whole hook path is exercised without network.
+-- usage: luae.exe test_hook.lua <fake writedir without trailing \> <folder with status.json/units.json>
 -- The mod runs from a Cyrillic subfolder of it (UTF-8, like lfs.writedir() of a Cyrillic user name);
 -- the path is made here because luae.exe gets its arguments in the ANSI code page.
-local writedir, fileBase = arg[1] .. '\\Пилот\\', arg[2]
+local writedir, fixtureDir = arg[1] .. '\\Пилот\\', arg[2] .. '\\'
+local testDir = string.match(arg[0], '^(.*[\\/])') or ''
 os.execute('mkdir "' .. writedir .. '" && move "' .. arg[1] .. '\\Scripts" "' .. writedir .. 'Scripts" >nul')
 
 -- dofile cannot open UTF-8 paths, io.open can
@@ -113,16 +114,33 @@ net = {
     end,
     recv_chat = function(msg) chats[#chats + 1] = msg end,
 }
--- download: 'ok' (fixtures), 'fail' (missing file:// folder), 'none' (no process: never finishes)
+-- download: 'ok' (fixtures), 'fail' (HTTP 404), 'none' (the server never answers), 'html' (an error page)
 local download = 'ok'
+local function fixture(name)
+    local f = assert(rawOpen(fixtureDir .. name, 'rb'))
+    local s = f:read('*a')
+    f:close()
+    return s
+end
+local fakeSocket, fakeSsl, fakeNet = dofile(testDir .. 'fake_net.lua')({
+    respond = function(path, conn)
+        check(conn.host == 'baikalprimestudio.com', 'request to ' .. tostring(conn.host))
+        local name = string.match(path or '', '^/data/(%a+%.json)$')
+        local body
+        if download == 'none' then return nil
+        elseif download == 'fail' or not name then body = 'not found'
+        elseif download == 'html' then body = '<html><body>maintenance</body></html>'
+        else body = fixture(name) end
+        local status = (download == 'fail' or not name) and '404 Not Found' or '200 OK'
+        return 'HTTP/1.1 ' .. status .. '\r\nContent-Length: ' .. #body .. '\r\n\r\n' .. body
+    end,
+})
+package.loaded['socket'], package.loaded['ssl'] = fakeSocket, fakeSsl   -- like another hook loaded them
+-- the mod must not start processes any more (it used wscript/cmd/curl)
 local realExecute = os.execute
+local spawned = {}
 os.execute = function(cmd)
-    if string.find(cmd, 'fetch.vbs', 1, true) then
-        if download == 'none' then return 0 end
-        local base = download == 'fail' and (fileBase .. 'missing/') or fileBase
-        cmd = cmd:gsub('https://baikalprimestudio%.com/data/', (base:gsub('%%', '%%%%')))
-        check(#cmd <= 256, 'os.execute command longer than 256 chars (' .. #cmd .. ')')
-    end
+    if string.find(cmd, 'wscript', 1, true) or string.find(cmd, 'curl', 1, true) then spawned[#spawned + 1] = cmd end
     return realExecute(cmd)
 end
 
@@ -142,8 +160,6 @@ local function frames(seconds)
         clock = clock + 1
         DCS.cb.onSimulationFrame()
         if logged('^map data downloaded', from) or logged('^download ', from) then return true end
-        local t = os.time()
-        while os.time() - t < 1 do end
     end
     return false
 end
@@ -217,6 +233,7 @@ local cb = DCS.cb
 check(logged('aircraft modules: AH%-64D_BLK_II, F%-16C_50, FA%-18C_hornet, ZZ_TEST'), 'config.lua selection not applied')
 check(logged('config.lua lists NOPE'), 'unknown type in config.lua not reported')
 check(logged('^config.user.lua loaded'), 'config.user.lua not loaded')
+check(not logged('^HTTPS'), 'LuaSec loaded before a SARMAT server was found')
 
 print('-- non-SARMAT server is ignored')
 server = 'Some Other Server'
@@ -225,7 +242,7 @@ mySideNum, mySlot = 2, '101'
 cb.onPlayerChangeSlot(7)
 check(#chats == 0 and not exists(dtcDir .. 'SARMAT_F-14BU.dtc'), 'acted on a non-SARMAT server')
 
-print('-- result flags of other fetches are not taken for ours')
+print('-- leftovers of the curl download of older versions are removed, not put in place')
 server = '[RU] SARMAT | Syria PvP'
 mySideNum, mySlot = 0, ''
 os.execute('mkdir "' .. cacheDir .. '" 2>nul')
@@ -241,7 +258,10 @@ check(not logged('map data downloaded'), 'took a flag of another fetch')
 check(not exists(cacheDir .. 'done.flag') and not exists(cacheDir .. 'done-1-1.flag'), 'old flags not removed')
 check(not exists(cacheDir .. 'status-1-1.part') and not exists(cacheDir .. 'status.json'),
     'parts of another fetch not removed or put in place')
+check(logged('^HTTPS: LuaSec fake loaded by another hook'), 'LuaSec source not logged')
+check(fakeNet.opened == 2, 'expected two connections (status, units), got ' .. fakeNet.opened)
 cb.onSimulationStop()
+check(fakeNet.opened == fakeNet.closed, 'a stopped download left ' .. (fakeNet.opened - fakeNet.closed) .. ' connection(s) open')
 
 print('-- SARMAT server: download on mission load')
 download = 'ok'
@@ -324,7 +344,7 @@ download = 'fail'
 local n = retake()
 check(#chats == n + 1 and chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - map data 2 h old',
     'stale cache chat: ' .. tostring(chats[#chats]))
-check(frames(30) and logged('^download failed %(status%.json: curl exit %d+'), 'failed download not reported with the curl code')
+check(frames(30) and logged('^download failed %(status%.json: HTTP 404%)'), 'failed download not reported with the HTTP status')
 check(chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download failed, map data 2 h old',
     'failed download chat: ' .. tostring(chats[#chats]))
 
@@ -357,6 +377,18 @@ cb.onSimulationFrame()
 check(logged('^download timed out'), 'timeout not logged')
 check(#chats == n + 2 and chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download timed out',
     'timeout chat: ' .. tostring(chats[#chats]))
+
+print('-- an error page instead of JSON is not put in place')
+download = 'html'
+local before = fixture('status.json')
+n = retake()
+check(frames(30) and logged('^download failed %(cannot put the data in place: status%.json is not JSON%)'),
+    'error page not rejected')
+local cf = rawOpen(statusPath, 'rb')
+check(cf and cf:read('*a') == before, 'cached status.json replaced by an error page')
+if cf then cf:close() end
+check(chats[#chats] == 'SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C, ZZ - download failed',
+    'error page chat: ' .. tostring(chats[#chats]))
 
 print('-- download confirms the cache: no second build and write, no chat')
 download = 'ok'
@@ -464,6 +496,11 @@ check(logged('^  .*new file in folder: cannot write %(0 of 5 bytes on disk%), io
     'diagnostics do not name the replaced io')
 check(logged('^no cartridges written %(6 failed%) for blue', from), 'failed count not in the summary')   -- 3 DTC + 3 ZZ_TEST
 check(frames(30), 'download did not finish')
+
+print('-- no processes started, no connection left open')
+check(#spawned == 0, 'the mod started a process: ' .. tostring(spawned[1]))
+cb.onSimulationStop()
+check(fakeNet.opened == fakeNet.closed, (fakeNet.opened - fakeNet.closed) .. ' connection(s) left open')
 
 print('-- no temporary files left next to the cartridges')
 for _, f in ipairs(listDir(dtcDir)) do

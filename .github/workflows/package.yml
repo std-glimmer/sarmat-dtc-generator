@@ -1,0 +1,35 @@
+# Packs the mod on every pushed commit: Actions -> package -> run -> artifact SarmatDTC-<VERSION>-<sha>.
+# The content is `git archive` of the commit: only tracked files, without the paths marked
+# export-ignore in .gitattributes (tests, CI, agent docs), so the cache and config.user.lua never get in.
+# Unzipped into Saved Games\DCS.openbeta it gives Scripts\Hooks\SarmatDTC-hook.lua and Scripts\SarmatDTC.
+name: package
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pack
+        run: |
+          for f in ssl.dll ssl.lua cacert.pem; do
+            test -s "Scripts/SarmatDTC/lib/$f" || { echo "::error::Scripts/SarmatDTC/lib/$f missing"; exit 1; }
+          done
+          version=$(sed -n "s/^local VERSION *= *'\([^']*\)'.*/\1/p" Scripts/SarmatDTC/SarmatDTC.lua)
+          echo "NAME=SarmatDTC-$version-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          mkdir dist
+          git archive HEAD | tar -x -C dist
+          find dist -type f | sort
+
+      # the artifact is downloaded as one zip of dist/, so the files are uploaded unpacked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist

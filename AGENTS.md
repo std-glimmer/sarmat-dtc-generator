@@ -20,8 +20,9 @@
 | `Scripts/SarmatDTC/SarmatDTC_core.lua` | Общая библиотека без зависимостей от DCS: данные карты → нейтральная «обстановка» (`situation`), классификация юнитов и ПВО, геометрия, загрузка и запуск модулей |
 | `Scripts/SarmatDTC/aircraft/<type>.lua` | **Один файл на модуль DCS**: переводит обстановку в DTC этого модуля, держит его символы и лимиты. Подхватывается автоматически |
 | `Scripts/SarmatDTC/aircraft/_template.lua` | Шаблон модуля с описанием API (файлы на `_` не загружаются) |
-| `Scripts/SarmatDTC/fetch.vbs` | Запускает `fetch.cmd` в скрытом окне и сразу возвращает управление |
-| `Scripts/SarmatDTC/fetch.cmd` | `curl.exe` → `cache/status-<id>.part`, `cache/units-<id>.part`, затем `cache/done-<id>.flag` (`ok` или `fail <файл> <код curl>`). На место `status.json`/`units.json` пару ставит `SarmatDTC.lua` |
+| `Scripts/SarmatDTC/SarmatDTC_http.lua` | Неблокирующий HTTPS GET без зависимостей от DCS (LuaSocket + LuaSec передаются параметром), шаг за кадр; загрузка LuaSocket/LuaSec (`loadTls`) |
+| `Scripts/SarmatDTC/lib/` | LuaSec для DCS: `ssl.dll` (x64, OpenSSL внутри, импорт `lua.dll`), `ssl.lua`, `cacert.pem`, лицензии, `VERSIONS.txt`. **Окончательная версия** (решение владельца: обновлений DLL не будет), собрана один раз в CI (windows-2022, MSVC, OpenSSL из vcpkg статически, Lua 5.1.5 как `lua.dll`; workflow `build-luasec.yml` удалён, он есть в истории git), руками не править |
+| `.github/workflows/package.yml` | Каждый пуш → проверка, что `lib/` на месте, и артефакт Actions `SarmatDTC-<VERSION>-<sha>` из `git archive` коммита (без путей `export-ignore` из `.gitattributes`: тесты, CI, AGENTS/CLAUDE). Релизов GitHub нет (решение владельца) |
 | `Scripts/SarmatDTC/tests/` | Офлайн-тесты и фикстуры (снимок данных карты, Сирия) |
 | `Scripts/SarmatDTC/cache/` | Кэш загрузки, генерируется во время работы, в git не попадает |
 
@@ -89,15 +90,20 @@ status.json + units.json ──core.situation()──► situation ──► air
 1. `onMissionLoadEnd`: `DCS.isMultiplayer()` и `net.get_server_settings().name` содержит `sarmat`
    (без учёта регистра) → `state.active`. Карта местности берётся из `Terrain.GetTerrainConfig('id')`.
    Сирия → `/data/`, Кавказ → `/k/data/`. Запускается фоновая загрузка.
-2. `onSimulationFrame`: раз в секунду проверяется `cache/done-<id>.flag` своей загрузки. У каждой загрузки
-   свой id (`os.time()-<счётчик>`): `fetch.vbs` передаёт его в `fetch.cmd`, тот пишет `status-<id>.part`,
-   `units-<id>.part` и флаг с этим id. При `ok` пару на место `status.json`/`units.json` ставит сам
-   `SarmatDTC.lua` (`promoteParts`) на GUI-потоке: пара никогда не читается наполовину обновлённой,
-   а поздно завершившийся старый процесс (например, после перезахода) не принимается за текущую загрузку
-   и не затирает свежие данные. При `fail` в лог пишется файл и код curl с расшифровкой частых кодов
-   (`download failed (units.json: curl exit 28, timeout)`). Перед новой загрузкой старые `done*.flag`
-   и `*.part` удаляются. `FETCH_TIMEOUT` (240 с) должен быть
-   больше худшего случая `fetch.cmd` (~200 с: попытка ≤ 40 с, повторы стартуют не позже 60 с, два файла).
+2. Загрузка идёт прямо из Lua (`SarmatDTC_http.lua`), без процессов: `startFetch` создаёт два запроса
+   (`status.json`, `units.json`), `onSimulationFrame` **каждый кадр** делает их шаг (`pollFetch`). Все
+   сокетные вызовы с нулевым таймаутом: шаг ничего не ждёт; блокирующий вызов один — DNS (`socket.dns.toip`)
+   в начале попытки. LuaSocket/LuaSec грузятся при первой загрузке за сессию DCS (`getTls`, в логе
+   `HTTPS: LuaSec 1.3.2 from ...`); если не вышло — `HTTPS unavailable, ...` в лог, генерация из старого кэша
+   с пометкой `download unavailable`. Когда оба тела получены, они проверяются на JSON (`{` в начале,
+   страница ошибки не ставится на место), пишутся в `cache/<name>.part` (`writeVerified`) и пара
+   переименовывается в `status.json`/`units.json` (`storeMapData`): пара никогда не бывает наполовину новой.
+   Новая загрузка, `onMissionLoadEnd` и `onSimulationStop` закрывают соединения прежней (`cancelFetch`),
+   так что поздний ответ старой загрузки ничего не запишет. Ошибка в логе называет файл и причину
+   (`download failed (units.json: timeout)`, `HTTP 503`, `TLS handshake failed (...)`, `host not found`).
+   Файлы `done*.flag`/`*.part` старых версий удаляются перед загрузкой. Параметры попыток —
+   `http.DEFAULTS` (как у прежнего curl: connect 15 с, попытка ≤ 40 с, 2 повтора не позже 60 с от начала,
+   ≤ 5 МБ); `FETCH_TIMEOUT` (150 с) — общий предел больше худшего случая (~130 с, файлы качаются параллельно).
 3. `onPlayerChangeSlot(id)` для своего id: сторона (`1`=red, `2`=blue; `0`, то есть зритель, игнорируется).
    Если кэшу больше `REFETCH_SEC`, DTC сразу генерируется из старого кэша, затем идёт перезагрузка,
    и после неё DTC генерируется ещё раз.
@@ -140,7 +146,8 @@ status.json + units.json ──core.situation()──► situation ──► air
   только таблицы, строки — только строки/числа, `count` — неотрицательное число (иначе число типов).
   Плохие записи пропускаются и считаются (`situation.skipped`), в лог — `map data: N malformed record(s)
   skipped`. Одна битая запись не должна отменять все картриджи.
-- Сайт работает только по HTTPS (HTTP отдаёт 308) и иногда таймаутит соединения. Не долбить его
+- Сайт работает только по HTTPS (HTTP отдаёт 308), запрос идёт как HTTP/1.1 с `Connection: close`
+  (через прокси на HTTP/1.0 был ответ 426), ответ может быть `chunked`. Иногда таймаутит соединения. Не долбить его
   запросами при отладке: используйте фикстуры.
 
 ## Правила DTC (сверено с `CoreMods/aircraft/*/DTC/*.lua` в установке DCS)
@@ -225,22 +232,26 @@ status.json + units.json ──core.situation()──► situation ──► air
 
 ## Ловушки окружения (проверено, не «упрощать» обратно)
 
-- **`os.execute` в Lua от ED молча игнорирует команды длиннее ~256 символов**: не выполняет и ничего
-  не возвращает. Команда запуска сделана короткой (VBS сам вычисляет папку кэша), а при длине больше 250
-  в лог пишется предупреждение.
-- `start "" file.cmd` хостит батник в `cmd /K`: окно остаётся висеть. Поэтому используется `wscript` + `Run(..., 0, False)`.
-- `.cmd`/`.vbs` должны быть в CRLF (`.gitattributes`). Инструмент Write пишет LF: после правок проверять
-  `file fetch.cmd`.
-- В GUI-окружении нет HTTPS в Lua (только LuaSocket без SSL), поэтому используется системный `curl.exe`.
-  Его флаги в `fetch.cmd` — защита от недоверенного ответа: `--proto =https,file` (`file` нужен только
-  офлайн-тесту, базовый адрес зашит в коде), `--proto-redir =https` (без понижения до http),
-  `--max-filesize 5M` (JSON разбирается на GUI-потоке, огромный ответ подвесил бы игру).
+- **`os.execute` в Lua от ED молча игнорирует команды длиннее ~256 символов** (поэтому раньше была цепочка
+  `wscript → cmd → curl`; с версии 1.2.0 мод процессов не запускает, `test_hook` это проверяет).
+- В GUI-окружении DCS есть только LuaSocket без SSL, поэтому LuaSec поставляется с модом (`lib/`).
+  `ssl.dll` импортирует `lua.dll` — имя должно совпадать с `bin\lua.dll` DCS (`LUA_DLL` в workflow).
+  LuaSec не видит хранилище сертификатов Windows: CA — `lib/cacert.pem` (Mozilla, из curl.se).
+  LuaSec **не проверяет имя хоста** сам: это делает `http.certMatches` (SAN, затем CN) после рукопожатия.
+  Защита от недоверенного ответа та же, что была у curl: только `https://` (и для редиректов, ≤ 3),
+  проверка сертификата, тело ≤ 5 МБ (JSON разбирается на GUI-потоке). Ошибки сертификата и 4xx не повторяются.
+- Многие серверы закрывают TLS без `close_notify`: OpenSSL 3 даёт `unexpected eof while reading`.
+  Это считается концом ответа, полноту проверяет `Content-Length`/`chunked` (`Req:complete`).
+- Другой хук мог уже загрузить свой `ssl` (общее окружение GUI): если в `package.loaded.ssl` есть
+  `wrap`/`newcontext`, используется он (в логе `loaded by another hook`).
 - **Кириллица в пути профиля** (`C:\Users\Олег\...`): `lfs.writedir()` отдаёт UTF-8. В `luae.exe`
   `io.open`, `os.rename`, `os.execute` и `io.popen` такие пути понимают, а `dofile`/`loadfile` — нет.
-  Поэтому файлы мода (хук, ядро, `config*.lua`, модули) грузятся через `io.open` + `loadstring`
+  Поэтому файлы мода (хук, ядро, `config*.lua`, модули, `lib/ssl.lua`) грузятся через `io.open` + `loadstring`
   (`core.loadFile`); `dofile` — только для файлов установки DCS по относительному пути. `test_hook`
-  запускает мод из подпапки `Пилот` и проверяет всю цепочку `wscript → cmd → curl`. Ведёт ли себя
-  `dofile` в самой игре так же, как в `luae.exe`, не проверялось.
+  запускает мод из подпапки `Пилот`. Ведёт ли себя `dofile` в самой игре так же, как в `luae.exe`, не проверялось.
+  `LoadLibrary` (`package.loadlib`) и OpenSSL (`cafile`) тоже берут ANSI-путь, поэтому при не-ASCII пути
+  `ssl.dll` и `cacert.pem` копируются в `%ProgramData%\SarmatDTC\` (`http.ansiPath`, имя с версией мода)
+  и грузятся оттуда; `test_tls.lua` (`run_tests.ps1 -Tls`) проверяет это на настоящей DLL.
 - PowerShell 5.1: `Get-ChildItem <папка> -Exclude ...` без маски в пути возвращает пустой список,
   фильтровать через `Where-Object`.
 - `Scripts/JSON.lua` из DCS: старый JSON.lua Фридла; пустые таблицы кодирует как `[]`, загрузчикам DCS это не мешает.
@@ -284,16 +295,24 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
   со спавном и без, сериализованы `core.toLua` и сравниваются побайтно. Рефакторинг должен
   сохранять их. Если вывод меняется намеренно, запустить `run_tests.ps1 -UpdateExpected`
   и посмотреть дифф эталонов в git (`-text` в `.gitattributes`, чтобы CRLF не ломал сравнение).
-- `test_hook.lua`: `SarmatDTC.lua` с заглушками `DCS`/`net`/`log`/`lfs`/`terrain` и **реальной** загрузкой
-  через `wscript → fetch.cmd → curl` по `file://`. Временная папка лежит в коротком `%TEMP%\sdtc*`
-  из-за лимита в 256 символов, мод запускается из её подпапки с кириллицей (`Пилот`). Тест подкладывает
+- `test_http.lua`: HTTPS-клиент на фейковых LuaSocket/LuaSec (`tests/fake_net.lua`): ответ кусками,
+  медленное соединение и рукопожатие, повторы (5xx, сброс, таймаут до `retryMaxTime`) и отказ без повтора
+  (4xx, сертификат), редиректы (https, относительный, на http, цикл), лимит размера, `chunked`,
+  обрыв, имя хоста в сертификате, отмена и закрытие всех соединений.
+- `test_hook.lua`: `SarmatDTC.lua` с заглушками `DCS`/`net`/`log`/`lfs`/`terrain` и загрузкой через
+  настоящий `SarmatDTC_http.lua` поверх `fake_net.lua`, который отдаёт фикстуры. Мод запускается
+  из подпапки временной папки с кириллицей (`Пилот`). Тест подкладывает
   свой `config.lua` (F-14 закомментирован, есть неизвестный тип), `config.user.lua` (заменяет одну
   запись `BASE_DTC`) и модуль `ZZ_TEST` только с `outputs` (text/lua/json; относительный, абсолютный
   и `%TEMP%` пути) и проверяет реально записанные файлы. Режим загрузки переключается (`download`:
-  `ok`/`fail`/`none`), время файла кэша подменяется (`mtime`). Проверяются чужие флаги и `.part`
-  (не ставятся на место), код curl в логе, версия и время генерации в логе, возраст кэша в чате,
+  `ok`/`fail` (404)/`none` (сервер молчит)/`html` (страница ошибки), время файла кэша подменяется (`mtime`).
+  Проверяются удаление `done*.flag`/`.part` старых версий, закрытие соединений при остановке,
+  отсутствие запусков `wscript`/`curl`, HTTP-статус в логе, версия и время генерации в логе, возраст кэша в чате,
   слишком старый кэш, кэш другой карты, таймаут, пропуск неизменных данных (и повторная запись
   удалённого картриджа), ошибка в колбэке и отсутствие `.tmp`/`.bak` рядом с картриджами.
+- `test_tls.lua` (только с `-Tls` или `-Online`): настоящий `lib/ssl.dll` в `luae.exe` из папки с кириллицей
+  и TLS-контекст; `-Online` — **один** реальный запрос `status.json` (время шагов в выводе). Если `luae.exe`
+  собран со статическим Lua, загрузка `ssl.dll` в нём невозможна — решает проверка в игре.
 - Интерпретатор — `bin\luae.exe` из установки DCS (Lua 5.1), запускать с рабочей папкой в корне DCS.
 - В DCS реально не запускается: после изменений в колбэках просить пользователя проверить в игре
   (`Logs\dcs.log`, тег `SARMAT.DTC`).
@@ -338,9 +357,13 @@ powershell -ExecutionPolicy Bypass -File "Scripts\SarmatDTC\tests\run_tests.ps1"
 
 ### 5. Отладка в игре
 - Лог: `Saved Games\DCS.openbeta\Logs\dcs.log`, искать `SARMAT.DTC`.
-- Кэш: `Scripts\SarmatDTC\cache\` (`done-<id>.flag` = `ok` / `fail <файл> <код curl>`). Ручная проверка
-  загрузки (флаг — `done-manual.flag`, данные — `status-manual.part`/`units-manual.part`, на место их
-  не ставят): `wscript //B //Nologo Scripts\SarmatDTC\fetch.vbs https://baikalprimestudio.com/data/`.
+- Кэш: `Scripts\SarmatDTC\cache\status.json`, `units.json`. Строки загрузки в логе: `HTTPS: ...` (откуда
+  взят LuaSec), `downloading ...`, `map data downloaded in N s` или `download failed (<файл>: <причина>)`.
+  Ручная проверка загрузки и LuaSec вне игры: `run_tests.ps1 -Online`.
+- `lib/` не обновляется (решение владельца). Если это всё же понадобится — восстановить
+  `build-luasec.yml` из истории git, обновить версии/хеши и поднять `VERSION`: имя копии в `%ProgramData%` от неё зависит.
+- Сборка мода: каждый пуш даёт артефакт `SarmatDTC-<VERSION>-<sha>` (`package.yml`); при выпуске поднять
+  `VERSION`. Новый файл, который не должен попасть в архив, — `export-ignore` в `.gitattributes`.
 - После записи в чат приходит короткое локальное сообщение (`CONFIG.SHOW_CHAT`), например
   `SarmatDTC: BLUE DTC ready (Hatay): AH-64D, F-16C, FA-18C`: сторона, база спавна, записанные
   типы (часть до `_`). После ` - ` идут пометки: `download failed`/`download timed out`, `map data 2 h old`,
