@@ -398,6 +398,9 @@ end
 --              -- adLead = the lead unit itself is that AD type
 --     sites  = { {x, z, friendly, ad, name}, ... }  -- SAM sites not covered by a live AD group
 --     farps  = { {x, z, friendly, name, kind}, ... } -- FARPs and FOBs, twin pads merged
+--     airfields   = { {x, z, friendly, name}, ... } -- airfields (objectives kind "Airfield")
+--     strongholds = { {x, z, friendly, name}, ... } -- strongholds (objectives kind "Stronghold")
+--     strongpoints = { {x, z, friendly, name}, ... } -- alive strongpoints (status.strong kind "OP*")
 --     spawn  = { x, z, name } | nil                 -- own start base (env.spawn), set by M.build
 --     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
 --     skipped = n                                   -- malformed map records left out
@@ -405,7 +408,8 @@ end
 function M.situation(status, units, mySide)
     status, units = listOf(status), listOf(units)
     mySide = sideKey(mySide) or "blue"
-    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {}, skipped = 0 }
+    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {},
+        airfields = {}, strongholds = {}, strongpoints = {}, skipped = 0 }
 
     for _, p in ipairs(listOf(status.front)) do
         if placed(s, p) then s.front[#s.front + 1] = { x = p.x, z = p.z } end
@@ -431,20 +435,25 @@ function M.situation(status, units, mySide)
         end
     end
 
-    -- SAM sites (may be despawned while nobody is near, still a threat)
+    -- SAM sites (may be despawned while nobody is near, still a threat) and strongpoints
     for _, o in ipairs(listOf(status.strong)) do
         o = placed(s, o)
         local side = o and sideKey(o.side)
-        if o and (o.kind == "SAM" or o.kind == "Sam") and side and not o.dead then
-            local friendly = side == mySide
-            local covered = false
-            for _, g in ipairs(s.groups) do
-                if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
-            end
-            if not covered then
-                s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
-                    ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
-                    name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
+        if o and side and not o.dead then
+            if o.kind == "SAM" or o.kind == "Sam" then
+                local friendly = side == mySide
+                local covered = false
+                for _, g in ipairs(s.groups) do
+                    if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
+                end
+                if not covered then
+                    s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
+                        ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
+                        name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
+                end
+            elseif string.match(textOf(o.kind), "^OP") then
+                s.strongpoints[#s.strongpoints + 1] = { x = o.x, z = o.z,
+                    friendly = side == mySide, name = textOf(o.name) }
             end
         end
     end
@@ -452,16 +461,24 @@ function M.situation(status, units, mySide)
     for _, o in ipairs(listOf(status.objectives)) do
         o = placed(s, o)
         local owner = o and sideKey(o.owner)
-        if o and (o.kind == "FARP" or o.kind == "FOB") and owner then
-            local friendly = owner == mySide
-            local twin = false
-            for _, f in ipairs(s.farps) do
-                if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
-            end
-            if not twin then
-                local name = textOf(o.name)
-                if o.kind == "FARP" then name = "FARP " .. name end
-                s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
+        if o and owner then
+            if o.kind == "FARP" or o.kind == "FOB" then
+                local friendly = owner == mySide
+                local twin = false
+                for _, f in ipairs(s.farps) do
+                    if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
+                end
+                if not twin then
+                    local name = textOf(o.name)
+                    if o.kind == "FARP" then name = "FARP " .. name end
+                    s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
+                end
+            elseif o.kind == "Airfield" then
+                s.airfields[#s.airfields + 1] = { x = o.x, z = o.z,
+                    friendly = owner == mySide, name = textOf(o.name) }
+            elseif o.kind == "Stronghold" then
+                s.strongholds[#s.strongholds + 1] = { x = o.x, z = o.z,
+                    friendly = owner == mySide, name = textOf(o.name) }
             end
         end
     end

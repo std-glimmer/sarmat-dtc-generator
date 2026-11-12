@@ -16,14 +16,14 @@ return {
         "F-16C_50",
         "FA-18C_hornet",
         "F-14BU",
-        "F-15ESE",          -- example: prepares data only, writes no file yet (format not decided)
+        "F-15ESE",          -- preset for Haack's F-15E DTC mod: Documents\DCS-DTC\Presets\F15E\SARMAT.json
     },
 
     -- Folder of the generated SARMAT_<type>.dtc: relative to Saved Games\DCS.openbeta, absolute
     -- ("D:\\DCS DTC", "\\\\server\\share") or with %ENV% variables; created if missing.
     -- In DCS, Import in the DTC manager opens Saved Games\...\DTC: browse to this folder there.
     -- OPTIONS[type].outputs["dcs-dtc"].dir overrides it for one aircraft.
-    DTC_DIR = "DTC",
+    DTC_DIR = "C:\\Users\\Прохор\\Saved Games",
 
     -- Base DCS cartridge per aircraft (DCS native .dtc only): every field the script does not fill
     -- (radios, CMDS, laser codes, waypoints, ...) is taken from it. File name in
