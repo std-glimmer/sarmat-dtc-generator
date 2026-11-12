@@ -131,6 +131,61 @@ end
 
 M.dist = dist
 
+-- Point-in-polygon on x/z (ray cast); ring = { {x, z}, ... } (closed or not).
+function M.pointInPolygon(x, z, ring)
+    local inside, j = false, #ring
+    for i = 1, #ring do
+        local xi, zi, xj, zj = ring[i].x, ring[i].z, ring[j].x, ring[j].z
+        if (zi > z) ~= (zj > z) and x < (xj - xi) * (z - zi) / (zj - zi) + xi then
+            inside = not inside
+        end
+        j = i
+    end
+    return inside
+end
+
+-- Segments (ax,az)-(bx,bz) and (cx,cz)-(dx,dz) properly cross.
+local function segsCross(ax, az, bx, bz, cx, cz, dx, dz)
+    local d1 = (dx - cx) * (az - cz) - (dz - cz) * (ax - cx)
+    local d2 = (dx - cx) * (bz - cz) - (dz - cz) * (bx - cx)
+    local d3 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax)
+    local d4 = (bx - ax) * (dz - az) - (bz - az) * (dx - ax)
+    return ((d1 > 0) ~= (d2 > 0)) and ((d3 > 0) ~= (d4 > 0))
+end
+
+-- The sectors of s.sectors the front line runs through (a front point inside the ring, or
+-- the ring and the front polyline cross). nil when the map data has no sectors at all.
+function M.activeSectors(s)
+    if #s.sectors == 0 then return nil end
+    local out = {}
+    for _, sec in ipairs(s.sectors) do
+        local hit = false
+        for _, p in ipairs(s.front) do
+            if M.pointInPolygon(p.x, p.z, sec.ring) then hit = true break end
+        end
+        local ring = sec.ring
+        for i = 1, #ring - 1 do
+            if hit then break end
+            for j = 1, #s.front - 1 do
+                if segsCross(ring[i].x, ring[i].z, ring[i + 1].x, ring[i + 1].z,
+                    s.front[j].x, s.front[j].z, s.front[j + 1].x, s.front[j + 1].z) then
+                    hit = true break
+                end
+            end
+        end
+        if hit then out[#out + 1] = sec end
+    end
+    return out
+end
+
+-- x/z inside any of the given sector rings.
+function M.inAnySector(x, z, sectors)
+    for _, sec in ipairs(sectors) do
+        if M.pointInPolygon(x, z, sec.ring) then return true end
+    end
+    return false
+end
+
 ------------------------------------------------------------------------------
 -- terrain helpers for modules
 ------------------------------------------------------------------------------
@@ -398,17 +453,37 @@ end
 --              -- adLead = the lead unit itself is that AD type
 --     sites  = { {x, z, friendly, ad, name}, ... }  -- SAM sites not covered by a live AD group
 --     farps  = { {x, z, friendly, name, kind}, ... } -- FARPs and FOBs, twin pads merged
+--     airfields   = { {x, z, friendly, name}, ... } -- airfields (objectives kind "Airfield")
+--     strongholds = { {x, z, friendly, name}, ... } -- strongholds (objectives kind "Stronghold")
+--     strongpoints = { {x, z, friendly, name}, ... } -- alive strongpoints (status.strong kind "OP*")
 --     spawn  = { x, z, name } | nil                 -- own start base (env.spawn), set by M.build
+--     sectors = { {ring = {{x, z}, ...}, owner, name}, ... } -- map sectors (status.geo.sectors)
 --     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
 --     skipped = n                                   -- malformed map records left out
 -- }
 function M.situation(status, units, mySide)
     status, units = listOf(status), listOf(units)
     mySide = sideKey(mySide) or "blue"
-    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {}, skipped = 0 }
+    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {},
+        airfields = {}, strongholds = {}, strongpoints = {}, sectors = {}, skipped = 0 }
 
     for _, p in ipairs(listOf(status.front)) do
         if placed(s, p) then s.front[#s.front + 1] = { x = p.x, z = p.z } end
+    end
+
+    for _, sec in ipairs(listOf(type(status.geo) == "table" and status.geo.sectors)) do
+        if type(sec) == "table" and type(sec.ring) == "table" then
+            local ring = {}
+            for _, p in ipairs(sec.ring) do
+                if type(p) == "table" and isNum(p[1]) and isNum(p[2]) then
+                    ring[#ring + 1] = { x = p[1], z = p[2] }
+                end
+            end
+            if #ring >= 3 then
+                s.sectors[#s.sectors + 1] = { ring = ring, owner = sideKey(sec.owner),
+                    name = textOf(sec.name) }
+            end
+        end
     end
 
     for _, g in ipairs(listOf(units.groups)) do
@@ -431,20 +506,25 @@ function M.situation(status, units, mySide)
         end
     end
 
-    -- SAM sites (may be despawned while nobody is near, still a threat)
+    -- SAM sites (may be despawned while nobody is near, still a threat) and strongpoints
     for _, o in ipairs(listOf(status.strong)) do
         o = placed(s, o)
         local side = o and sideKey(o.side)
-        if o and (o.kind == "SAM" or o.kind == "Sam") and side and not o.dead then
-            local friendly = side == mySide
-            local covered = false
-            for _, g in ipairs(s.groups) do
-                if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
-            end
-            if not covered then
-                s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
-                    ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
-                    name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
+        if o and side and not o.dead then
+            if o.kind == "SAM" or o.kind == "Sam" then
+                local friendly = side == mySide
+                local covered = false
+                for _, g in ipairs(s.groups) do
+                    if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
+                end
+                if not covered then
+                    s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
+                        ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
+                        name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
+                end
+            elseif string.match(textOf(o.kind), "^OP") then
+                s.strongpoints[#s.strongpoints + 1] = { x = o.x, z = o.z,
+                    friendly = side == mySide, name = textOf(o.name) }
             end
         end
     end
@@ -452,16 +532,24 @@ function M.situation(status, units, mySide)
     for _, o in ipairs(listOf(status.objectives)) do
         o = placed(s, o)
         local owner = o and sideKey(o.owner)
-        if o and (o.kind == "FARP" or o.kind == "FOB") and owner then
-            local friendly = owner == mySide
-            local twin = false
-            for _, f in ipairs(s.farps) do
-                if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
-            end
-            if not twin then
-                local name = textOf(o.name)
-                if o.kind == "FARP" then name = "FARP " .. name end
-                s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
+        if o and owner then
+            if o.kind == "FARP" or o.kind == "FOB" then
+                local friendly = owner == mySide
+                local twin = false
+                for _, f in ipairs(s.farps) do
+                    if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
+                end
+                if not twin then
+                    local name = textOf(o.name)
+                    if o.kind == "FARP" then name = "FARP " .. name end
+                    s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
+                end
+            elseif o.kind == "Airfield" then
+                s.airfields[#s.airfields + 1] = { x = o.x, z = o.z,
+                    friendly = owner == mySide, name = textOf(o.name) }
+            elseif o.kind == "Stronghold" then
+                s.strongholds[#s.strongholds + 1] = { x = o.x, z = o.z,
+                    friendly = owner == mySide, name = textOf(o.name) }
             end
         end
     end

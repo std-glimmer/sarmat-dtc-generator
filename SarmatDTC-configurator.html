@@ -1,0 +1,1510 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SarmatDTC — настройки</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23141a20'/%3E%3Ccircle cx='8' cy='8' r='4.5' fill='none' stroke='%23ffb454' stroke-width='1.6' stroke-dasharray='3 2'/%3E%3C/svg%3E">
+<style>
+:root{
+  /* primitives */
+  --p-bg: oklch(0.22 0.012 240);
+  --p-panel: oklch(0.27 0.014 240);
+  --p-panel-2: oklch(0.31 0.016 240);
+  --p-line: oklch(0.38 0.015 240);
+  --p-text: oklch(0.90 0.01 90);
+  --p-text-dim: oklch(0.66 0.015 240);
+  --p-amber: oklch(0.78 0.15 75);
+  --p-green: oklch(0.75 0.14 155);
+  --p-red: oklch(0.65 0.19 30);
+  /* semantics */
+  --bg: var(--p-bg);
+  --panel: var(--p-panel);
+  --panel-2: var(--p-panel-2);
+  --line: var(--p-line);
+  --text: var(--p-text);
+  --text-dim: var(--p-text-dim);
+  --accent: var(--p-amber);
+  --ok: var(--p-green);
+  --err: var(--p-red);
+  --radius: 8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font:16px/1.6 Bahnschrift,"Segoe UI",sans-serif;
+  color:var(--text);background:var(--bg);
+  -webkit-font-smoothing:antialiased;min-height:100dvh;
+}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button,select,input{cursor:pointer;font:inherit;color:inherit}
+input[type=text],input[type=number]{cursor:text}
+code,.mono{font-family:Consolas,"Cascadia Mono",monospace}
+
+/* ---- top bar ---- */
+.topbar{
+  position:sticky;top:0;z-index:10;
+  display:flex;flex-wrap:wrap;align-items:center;gap:12px;
+  padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line);
+}
+.brand{font-size:20px;font-weight:600;letter-spacing:0.04em}
+.brand b{color:var(--accent);font-weight:600}
+.file-status{color:var(--text-dim);font-size:14px;flex:1;min-width:200px}
+.file-status .mono{color:var(--text)}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+button{
+  border:1px solid var(--line);background:var(--panel-2);color:var(--text);
+  border-radius:var(--radius);padding:8px 16px;min-height:44px;
+  transition:background 0.15s ease-out,border-color 0.15s ease-out;
+}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:active:not(:disabled){transform:scale(0.97)}
+button:disabled{opacity:0.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:oklch(0.25 0.05 75);font-weight:600}
+button.primary:hover:not(:disabled){filter:brightness(1.08)}
+
+/* ---- layout ---- */
+.wrap{max-width:960px;margin:0 auto;padding:24px}
+nav.sections{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px}
+nav.sections a{
+  color:var(--text-dim);text-decoration:none;border:1px solid var(--line);
+  border-radius:999px;padding:6px 14px;font-size:14px;
+  transition:color 0.15s,border-color 0.15s;
+}
+nav.sections a:hover{color:var(--accent);border-color:var(--accent)}
+
+/* ---- aircraft tabs ---- */
+.tabs{display:flex;gap:8px;flex-wrap:wrap;flex-basis:100%}
+.tab{
+  border:1px solid var(--line);background:transparent;color:var(--text-dim);
+  border-radius:999px;padding:6px 18px;font-size:15px;min-height:40px;
+}
+.tab:hover:not(.active){color:var(--accent);border-color:var(--accent)}
+.tab.active{background:var(--accent);border-color:var(--accent);color:oklch(0.25 0.05 75);font-weight:600}
+.ac-page[hidden]{display:none}
+section{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:20px 24px;margin-bottom:20px;scroll-margin-top:80px;
+}
+h1{font-size:26px;line-height:1.2;margin-bottom:4px}
+h2{font-size:19px;line-height:1.25;margin-bottom:4px;color:var(--accent);font-weight:600}
+section>p.sub{color:var(--text-dim);font-size:14px;margin-bottom:16px}
+
+/* ---- fields ---- */
+.row{
+  display:flex;flex-wrap:wrap;align-items:center;gap:12px;
+  padding:10px 0;border-top:1px solid var(--line);
+}
+.row:first-of-type{border-top:none}
+.row label{flex:1;min-width:220px}
+.row label small{display:block;color:var(--text-dim);font-size:13px}
+.row .ctrl{display:flex;align-items:center;gap:8px}
+input[type=number]{
+  width:110px;background:var(--bg);border:1px solid var(--line);border-radius:6px;
+  padding:8px 10px;font-family:Consolas,monospace;
+}
+input[type=color]{
+  width:56px;height:36px;padding:2px;background:var(--bg);
+  border:1px solid var(--line);border-radius:6px;
+}
+select{
+  background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-height:40px;
+}
+.unit{color:var(--text-dim);font-size:14px}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+.chk{display:inline-flex;align-items:center;gap:6px;margin-right:14px;white-space:nowrap}
+
+/* ---- F-16 consumable rows / color grid ---- */
+.cons-host .row .ctrl input{width:86px}
+.colr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:4px 16px;margin-bottom:14px}
+.colr-item{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:13px;padding:3px 0;border-bottom:1px dotted var(--line);
+}
+.colr-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.colr-item select{min-height:32px;padding:4px 8px;font-size:13px}
+h3.colr-group{font-size:15px;color:var(--text-dim);margin:14px 0 6px;text-transform:uppercase;letter-spacing:0.06em}
+
+/* ---- line style preview ---- */
+.preview svg{display:block;background:var(--bg);border:1px solid var(--line);border-radius:6px}
+
+/* ---- displays grid ---- */
+.disp{margin-top:14px}
+.disp h3{font-size:16px;color:var(--text);margin-bottom:6px}
+.disp .grid{
+  display:grid;grid-template-columns:minmax(150px,1fr) repeat(3,minmax(180px,1fr));
+  gap:8px;align-items:center;
+}
+.disp .grid .head{color:var(--text-dim);font-size:13px}
+.slot{display:flex;gap:6px}
+.slot select:first-child{flex:1.4}
+.slot select:last-child{flex:1}
+@media (max-width:800px){
+  .disp .grid{grid-template-columns:1fr}
+  .disp .grid .head{display:none}
+}
+
+/* ---- status toast ---- */
+.toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px 18px;font-size:14px;opacity:0;pointer-events:none;
+  transition:opacity 0.2s ease-out;z-index:20;max-width:90vw;
+}
+.toast.show{opacity:1}
+.toast.ok{border-color:var(--ok)}
+.toast.err{border-color:var(--err)}
+
+footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">SARMAT<b>DTC</b> · настройки</div>
+  <div class="file-status" id="fileStatus">Файл не открыт — показаны значения по умолчанию</div>
+  <div class="actions">
+    <button id="btnOpen" type="button">Открыть config.user.lua…</button>
+    <button id="btnSave" type="button" class="primary" disabled>Сохранить</button>
+    <button id="btnDownload" type="button">Скачать файл</button>
+  </div>
+  <div class="tabs" id="acTabs" role="tablist" aria-label="Самолёты"></div>
+</header>
+
+<div class="wrap">
+  <div class="ac-page" data-ac="f15e">
+  <nav class="sections" aria-label="Разделы F-15E">
+    <a href="#sec-f15e">F-15E Strike Eagle</a>
+    <a href="#sec-routes">Целевые точки</a>
+    <a href="#sec-rings">Круги угроз</a>
+    <a href="#sec-front">Линия фронта</a>
+    <a href="#sec-displays">Дисплеи</a>
+    <a href="#sec-misc">Misc</a>
+  </nav>
+
+  <section id="sec-f15e">
+    <h1>F-15E Strike Eagle</h1>
+    <p class="sub">Эти настройки попадают в блок <code class="mono">OPTIONS["F-15ESE"]</code> файла
+    <code class="mono">config.user.lua</code> и применяются при старте миссии (DCS перезапускать не нужно).
+    Откройте свой <code class="mono">Saved Games\DCS.openbeta\Scripts\SarmatDTC\config.user.lua</code>,
+    чтобы продолжить редактирование текущих значений, или настройте всё с нуля и скачайте файл.</p>
+  </section>
+
+  <section id="sec-routes">
+    <h2>Целевые точки с карты</h2>
+    <p class="sub">Маршрут B: вражеские опорные пункты и стронгхолды (с востока на запад).
+    Маршрут A: вражеские аэродромы и ФАРПы.</p>
+    <div class="row">
+      <label for="inTargets">Количество целевых точек (маршрут B)
+        <small>Опорники и стронгхолды, забиваемые с карты. 0 — без точек.</small></label>
+      <div class="ctrl"><input type="number" id="inTargets" min="0" max="99" step="1"><span class="unit">точек, макс 99</span></div>
+    </div>
+    <div class="row">
+      <label for="inRouteBNm">Предельная дистанция от ЛБС (маршрут B)
+        <small>Опорники и стронгхолды дальше этой дистанции не забиваются.</small></label>
+      <div class="ctrl"><input type="number" id="inRouteBNm" min="0" max="500" step="1"><span class="unit">морских миль</span></div>
+    </div>
+    <div class="row">
+      <label for="inRouteANm">Предельная дистанция от ЛБС (маршрут A)
+        <small>Вражеские аэродромы и ФАРПы дальше этой дистанции не забиваются.</small></label>
+      <div class="ctrl"><input type="number" id="inRouteANm" min="0" max="500" step="1"><span class="unit">морских миль</span></div>
+    </div>
+  </section>
+
+  <section id="sec-rings">
+    <h2>Круги угроз</h2>
+    <p class="sub">Зоны поражения вражеских ЗРК на странице SIT.
+    Мод Modern F-15E сам рисует кольца SAM/EWR (янтарный — радар включён, серый — выключен,
+    маджента — вы внутри кольца) на SIT и TSD, поэтому по умолчанию свои кольца отключены:
+    включайте их, только если штатные кольца на сервере не видны.</p>
+    <div class="row">
+      <label for="inThreats">Количество кругов угроз
+        <small>Сколько кругов ЗРК забивать с карты. 0 — не рисовать (штатные кольца мода).</small></label>
+      <div class="ctrl"><input type="number" id="inThreats" min="0" max="30" step="1"><span class="unit">кругов, макс 30</span></div>
+    </div>
+    <div class="row">
+      <label for="inRingColor">Цвет кругов</label>
+      <div class="ctrl"><input type="color" id="inRingColor" value="#FFFF00"></div>
+    </div>
+    <div class="row">
+      <label for="inRingStyle">Тип линии</label>
+      <div class="ctrl">
+        <select id="inRingStyle">
+          <option value="solid">Сплошная</option>
+          <option value="dash" selected>Пунктир</option>
+          <option value="dot">Точки</option>
+          <option value="dotdash">Штрих-пунктир</option>
+        </select>
+        <span class="preview" id="ringPreview"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-front">
+    <h2>Линия фронта</h2>
+    <p class="sub">Линия боевого соприкосновения на странице SIT.</p>
+    <div class="row">
+      <label for="inFrontColor">Цвет линии</label>
+      <div class="ctrl"><input type="color" id="inFrontColor" value="#FF0000"></div>
+    </div>
+    <div class="row">
+      <label for="inFrontStyle">Тип линии</label>
+      <div class="ctrl">
+        <select id="inFrontStyle">
+          <option value="solid" selected>Сплошная</option>
+          <option value="dash">Пунктир</option>
+          <option value="dot">Точки</option>
+          <option value="dotdash">Штрих-пунктир</option>
+        </select>
+        <span class="preview" id="frontPreview"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-displays">
+    <h2>Пресеты дисплеев</h2>
+    <p class="sub">Страницы MPD/MPCD по слотам PROG (как в strike-eagle-dtc → Displays): до трёх страниц
+    на дисплей, каждая со своим мастер-режимом. Пустая страница («—») слот не занимает.</p>
+    <div id="displaysHost"></div>
+  </section>
+
+  <section id="sec-misc">
+    <h2>Misc</h2>
+    <p class="sub">Как в strike-eagle-dtc → Misc. Пустое поле не записывается в картридж
+    (в самолёте останется текущее значение).</p>
+    <div class="row">
+      <label for="inBingo">Bingo fuel<small>Остаток топлива для предупреждения.</small></label>
+      <div class="ctrl"><input type="number" id="inBingo" min="0" max="30000" step="100" placeholder="не задано"><span class="unit">фунтов</span></div>
+    </div>
+    <div class="row">
+      <label for="inCara">CARA ALOW<small>Минимальная высота радарного альтиметра.</small></label>
+      <div class="ctrl"><input type="number" id="inCara" min="0" max="50000" step="10" placeholder="не задано"><span class="unit">футов</span></div>
+    </div>
+    <div class="row">
+      <label for="inTacanCh">TACAN<small>Канал, диапазон, режим и состояние. Работает, только если задан канал.</small></label>
+      <div class="ctrl">
+        <input type="number" id="inTacanCh" min="1" max="126" step="1" placeholder="канал">
+        <select id="inTacanBand"><option value="X">X</option><option value="Y">Y</option></select>
+        <select id="inTacanMode"><option value="TR">T/R</option><option value="AA">A/A</option></select>
+        <label style="flex:none;display:flex;align-items:center;gap:6px"><input type="checkbox" id="inTacanOn" checked>вкл</label>
+      </div>
+    </div>
+    <div class="row">
+      <label for="inIls">ILS<small>Частота курсо-глисадной системы.</small></label>
+      <div class="ctrl"><input type="number" id="inIls" min="108.1" max="111.95" step="0.05" placeholder="не задано"><span class="unit">МГц</span></div>
+    </div>
+    <div class="row">
+      <label for="inTgp">Лазерный код TGP<small>Код лазерной подсветки целеуказателя (например 1688).</small></label>
+      <div class="ctrl"><input type="number" id="inTgp" min="1111" max="1788" step="1" placeholder="не задано"></div>
+    </div>
+  </section>
+
+  </div><!-- /ac-page f15e -->
+
+  <div class="ac-page" data-ac="f18" hidden>
+  <nav class="sections" aria-label="Разделы F/A-18">
+    <a href="#sec-f18">F/A-18C Hornet</a>
+    <a href="#sec-f18-sa">F18: SA</a>
+    <a href="#sec-f18-gps">F18: GPS</a>
+    <a href="#sec-f18-mez">F18: угрозы</a>
+    <a href="#sec-f18-cmds">F18: CMDS</a>
+  </nav>
+
+  <section id="sec-f18">
+    <h1>F/A-18C Hornet</h1>
+    <p class="sub">Эти настройки попадают в блок <code class="mono">OPTIONS["FA-18C_hornet"]</code> файла
+    <code class="mono">config.user.lua</code>. С карты забиваются: линия фронта как коридор 1
+    (SA → CORRIDORS), аэродромы и ФАРПы обеих сторон в секторах у ЛБС (GPS WAYPTS 1),
+    вражеские опорники и стронгхолды (GPS WAYPTS 2), кольца ЗРК (SA → MEZ THRTS).</p>
+  </section>
+
+  <section id="sec-f18-sa">
+    <h2>SA — страница по умолчанию</h2>
+    <p class="sub">Что выбрано на странице SA после загрузки картриджа (выпадающие списки
+    Default в редакторе DTC).</p>
+    <div class="row">
+      <label for="inF18DefCorr">Default corridor<small>Коридор с линией фронта — коридор 1.</small></label>
+      <div class="ctrl"><select id="inF18DefCorr"></select></div>
+    </div>
+    <div class="row">
+      <label for="inF18DefFaor">Default FAOR</label>
+      <div class="ctrl"><select id="inF18DefFaor"></select></div>
+    </div>
+    <div class="row">
+      <label for="inF18DefFlot">Default FLOT</label>
+      <div class="ctrl"><select id="inF18DefFlot"></select></div>
+    </div>
+    <div class="row">
+      <label for="inF18DefMez">Default MEZ LVL<small>Уровень угроз, показываемый на SA.</small></label>
+      <div class="ctrl"><select id="inF18DefMez"></select></div>
+    </div>
+  </section>
+
+  <section id="sec-f18-gps">
+    <h2>GPS WAYPTS</h2>
+    <p class="sub">Таблица 1: аэродромы и ФАРПы обеих сторон в секторах, через которые проходит
+    ЛБС (только задействованные в миссии, ближние к ЛБС первые). Таблица 2: вражеские опорники
+    и стронгхолды. Подпись — 5 символов, полное имя — в примечании точки.</p>
+    <div class="row">
+      <label for="inF18Gps1Max">Точек в таблице 1<small>0 — таблица не заполняется.</small></label>
+      <div class="ctrl"><input type="number" id="inF18Gps1Max" min="0" max="100" step="1"><span class="unit">макс 100</span></div>
+    </div>
+    <div class="row">
+      <label for="inF18Gps2Max">Точек в таблице 2<small>0 — таблица не заполняется.</small></label>
+      <div class="ctrl"><input type="number" id="inF18Gps2Max" min="0" max="100" step="1"><span class="unit">макс 100</span></div>
+    </div>
+  </section>
+
+  <section id="sec-f18-mez">
+    <h2>Таблица угроз (MEZ THRTS)</h2>
+    <p class="sub">Кольца вражеских ЗРК на странице SA.</p>
+    <div class="row">
+      <label for="inF18Threats">Количество угроз<small>0 — брать угрозы из миссии (как есть на сервере).</small></label>
+      <div class="ctrl"><input type="number" id="inF18Threats" min="0" max="40" step="1"><span class="unit">макс 40</span></div>
+    </div>
+    <div class="row">
+      <label for="inF18MinRange">Минимальная дальность ЗРК<small>Ближняя ПВО (ЗУ, ПЗРК) мельче этой дальности не забивается.</small></label>
+      <div class="ctrl"><input type="number" id="inF18MinRange" min="0" max="100000" step="500"><span class="unit">метров</span></div>
+    </div>
+    <div class="row">
+      <label for="inF18ThreatLvl">Уровень угроз<small>Threat level, присваиваемый кольцам.</small></label>
+      <div class="ctrl"><select id="inF18ThreatLvl">
+        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+      </select></div>
+    </div>
+  </section>
+
+  <section id="sec-f18-cmds">
+    <h2>Пресеты CMDS (программы ловушек)</h2>
+    <p class="sub">Программы постановки помех (MAN 1–6, AUTO 1–3, BYPASS). Программа выпускает
+    серию импульсов: вы задаёте, сколько импульсов и с каким интервалом, а для каждого
+    расходника — сколько единиц уходит в одном импульсе. Пока выключено,
+    картридж CMDS не трогает — остаются программы из вашего базового DTC.</p>
+    <div class="row">
+      <label for="inF18CmdsOn">Записывать пресеты CMDS в картридж</label>
+      <div class="ctrl"><input type="checkbox" id="inF18CmdsOn"></div>
+    </div>
+    <div class="row">
+      <label for="inF18CmdsDelay">Задержка между программами</label>
+      <div class="ctrl"><input type="number" id="inF18CmdsDelay" min="0" max="10" step="1"><span class="unit">сек</span></div>
+    </div>
+    <div class="row">
+      <label for="inF18CmdsProg">Программа</label>
+      <div class="ctrl"><select id="inF18CmdsProg"></select></div>
+    </div>
+    <div class="row">
+      <label>Импульсы<small>Сколько импульсов выпускает программа и с каким интервалом
+      (0.25–5 с, шаг 0.25). Общие для всех расходников программы.</small></label>
+      <div class="ctrl">
+        <input type="number" id="inF18BurstR" min="0" max="99" step="1" aria-label="повторы импульсов">
+        <span class="unit">повторов</span>
+        <input type="number" id="inF18BurstI" min="0.25" max="5" step="0.25" aria-label="интервал импульсов">
+        <span class="unit">с</span>
+      </div>
+    </div>
+    <div class="row">
+      <label>Расходники за импульс<small>Сколько выпускается в каждом импульсе:
+      Chaff / Flare / Other 1 / Other 2.</small></label>
+      <div class="ctrl">
+        <input type="number" id="inF18ChaffQ" min="0" max="99" step="1" aria-label="chaff за импульс">
+        <input type="number" id="inF18FlareQ" min="0" max="99" step="1" aria-label="flare за импульс">
+        <input type="number" id="inF18Other1Q" min="0" max="99" step="1" aria-label="other 1 за импульс">
+        <input type="number" id="inF18Other2Q" min="0" max="99" step="1" aria-label="other 2 за импульс">
+      </div>
+    </div>
+  </section>
+
+  </div><!-- /ac-page f18 -->
+
+  <div class="ac-page" data-ac="f16" hidden>
+  <nav class="sections" aria-label="Разделы F-16">
+    <a href="#sec-f16">F-16C Viper</a>
+    <a href="#sec-f16-cmds">F16: CMDS</a>
+    <a href="#sec-f16-color">F16: COLOR</a>
+  </nav>
+
+  <section id="sec-f16">
+    <h1>F-16C Viper</h1>
+    <p class="sub">Эти настройки попадают в блок <code class="mono">OPTIONS["F-16C_50"]</code> файла
+    <code class="mono">config.user.lua</code>. С карты забиваются: линия фронта (GEO line 1,
+    точки 31–41), аэродромы и ФАРПы обеих сторон по удалению от ЛБС (DEST PTS 81–99),
+    кольца ЗРК (THREAT PTS). Ниже — пресеты CMDS и цвета символики: все пункты разделов
+    CMDS и COLOR внутриигрового редактора DTC.</p>
+  </section>
+
+  <section id="sec-f16-cmds">
+    <h2>CMDS (программы постановки помех)</h2>
+    <p class="sub">Bingo-остатки, задержка между программами и программы MAN 1–6, AUTO 1–3,
+    BYPASS — как на странице CMDS редактора DTC. Пока выключено, картридж CMDS не трогает:
+    остаются настройки из вашего базового DTC.</p>
+    <div class="row">
+      <label for="inF16CmdsOn">Записывать пресеты CMDS в картридж</label>
+      <div class="ctrl"><input type="checkbox" id="inF16CmdsOn"></div>
+    </div>
+    <div class="row">
+      <label>Bingo — остаток расходников<small>Chaff / Flare / Other 1 / Other 2.</small></label>
+      <div class="ctrl">
+        <input type="number" id="inF16BingoChaff" min="0" max="99" step="1" aria-label="bingo chaff">
+        <input type="number" id="inF16BingoFlare" min="0" max="99" step="1" aria-label="bingo flare">
+        <input type="number" id="inF16BingoOther1" min="0" max="99" step="1" aria-label="bingo other 1">
+        <input type="number" id="inF16BingoOther2" min="0" max="99" step="1" aria-label="bingo other 2">
+      </div>
+    </div>
+    <div class="row">
+      <label>Bingo — оповещения<small>FDBK — отсчёт остатка, REQCTR — запрос подтверждения,
+      BINGO — голосовое предупреждение.</small></label>
+      <div class="ctrl">
+        <span class="chk"><input type="checkbox" id="inF16BingoFdbk"> FDBK</span>
+        <span class="chk"><input type="checkbox" id="inF16BingoReqctr"> REQCTR</span>
+        <span class="chk"><input type="checkbox" id="inF16BingoBingo"> BINGO</span>
+      </div>
+    </div>
+    <div class="row">
+      <label for="inF16CmdsDelay">Задержка между программами</label>
+      <div class="ctrl"><select id="inF16CmdsDelay"></select></div>
+    </div>
+    <div class="row">
+      <label for="inF16CmdsProg">Программа</label>
+      <div class="ctrl"><select id="inF16CmdsProg"></select></div>
+    </div>
+    <div class="cons-host" id="f16ConsHost"></div>
+  </section>
+
+  <section id="sec-f16-color">
+    <h2>COLOR (цвета символики)</h2>
+    <p class="sub">Цвета элементов MFD FCR, HSD/HAD и прочей символики — все пункты страницы
+    COLOR редактора DTC. Пока выключено, картридж цвета не трогает.</p>
+    <div class="row">
+      <label for="inF16ColrOn">Записывать цвета в картридж</label>
+      <div class="ctrl"><input type="checkbox" id="inF16ColrOn"></div>
+    </div>
+    <div id="f16ColrHost"></div>
+  </section>
+
+  </div><!-- /ac-page f16 -->
+
+  <footer>
+    Сохранённый файл положите в <span class="mono">Saved Games\DCS.openbeta\Scripts\SarmatDTC\config.user.lua</span>
+    (если открывали его кнопкой «Открыть», «Сохранить» запишет прямо в него).
+    Настройки перечитываются при каждом старте миссии.
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+<script>
+// SarmatDTC Configurator: edits per-aircraft blocks inside config.user.lua.
+// One page (tab) per aircraft; the file IO regenerates only the known blocks
+// and keeps everything else untouched.
+//
+// To add another aircraft:
+//   1. add an entry to AIRCRAFT_PAGES and wrap its sections in
+//      <div class="ac-page" data-ac="<id>"> with its own nav.sections;
+//   2. extend defaultState(), stateToUi()/uiToState() and the parsing
+//      (parse*Block) / generation (gen*Block, wired into genBlocks) —
+//      spliceConfig already handles any number of blocks.
+
+const PAGES = ["ADI", "ARMT", "HSI", "TSD", "ENG", "HUD", "AARDR", "AGRDR", "TEWS", "TPOD",
+  "AGDLVRY", "TF", "SMART", "SIT"];
+const MODES = [["AA", "A/A"], ["AG", "A/G"], ["NAV", "NAV"]];
+const DISPLAYS = [
+  ["Pilot", "LeftMPD", "Пилот · левая MPD"],
+  ["Pilot", "RightMPD", "Пилот · правая MPD"],
+  ["Pilot", "MPCD", "Пилот · MPCD"],
+  ["WSO", "LeftMPCD", "WSO · левая MPCD"],
+  ["WSO", "LeftMPD", "WSO · левая MPD"],
+  ["WSO", "RightMPD", "WSO · правая MPD"],
+  ["WSO", "RightMPCD", "WSO · правая MPCD"],
+];
+const DASHES = { solid: "none", dash: "14 7", dot: "2 7", dotdash: "14 6 2 6" };
+
+const DEFAULTS = {
+  TARGETS: 99, ROUTE_B_NM: 20, ROUTE_A_NM: 50, THREATS: 0,
+  RING_COLOR: "#ffff00", RING_STYLE: "dash",
+  FRONT_COLOR: "#ff0000", FRONT_STYLE: "solid",
+};
+
+// ---- F/A-18C ----
+const F18_PROGRAMS = ["MAN_1", "MAN_2", "MAN_3", "MAN_4", "MAN_5", "MAN_6", "AUTO_1", "AUTO_2", "AUTO_3", "BYP"];
+const F18_PROGRAM_LABELS = { MAN_1: "MAN 1", MAN_2: "MAN 2", MAN_3: "MAN 3", MAN_4: "MAN 4",
+  MAN_5: "MAN 5", MAN_6: "MAN 6", AUTO_1: "AUTO 1", AUTO_2: "AUTO 2", AUTO_3: "AUTO 3", BYP: "BYPASS" };
+// DCS defaults (CoreMods/aircraft/FA-18C/DTC/ALR67/CMDS_defs.lua)
+const F18_CMDS_DEFAULTS = {
+  delay: 0,
+  MAN_1:  { chaffQ: 1, chaffR: 10, chaffI: 1.00, flareQ: 1, other1Q: 0, other2Q: 0 },
+  MAN_2:  { chaffQ: 1, chaffR: 10, chaffI: 0.50, flareQ: 1, other1Q: 0, other2Q: 0 },
+  MAN_3:  { chaffQ: 2, chaffR: 5,  chaffI: 1.00, flareQ: 2, other1Q: 0, other2Q: 0 },
+  MAN_4:  { chaffQ: 2, chaffR: 10, chaffI: 0.50, flareQ: 2, other1Q: 0, other2Q: 0 },
+  MAN_5:  { chaffQ: 1, chaffR: 2,  chaffI: 1.00, flareQ: 1, other1Q: 0, other2Q: 0 },
+  MAN_6:  { chaffQ: 2, chaffR: 20, chaffI: 0.75, flareQ: 2, other1Q: 0, other2Q: 0 },
+  AUTO_1: { chaffQ: 1, chaffR: 4,  chaffI: 1.50, flareQ: 0, other1Q: 0, other2Q: 0 },
+  AUTO_2: { chaffQ: 1, chaffR: 6,  chaffI: 1.00, flareQ: 0, other1Q: 0, other2Q: 0 },
+  AUTO_3: { chaffQ: 1, chaffR: 8,  chaffI: 0.50, flareQ: 0, other1Q: 0, other2Q: 0 },
+  BYP:    { chaffQ: 2, chaffR: 1,  chaffI: 1.00, flareQ: 2, other1Q: 0, other2Q: 0 },
+};
+const F18_DEFAULTS = {
+  GPS1_MAX: 100, GPS2_MAX: 100, THREATS: 40, MIN_RANGE: 6000, THREAT_LEVEL: 1,
+  DEFAULT_CORRIDOR: 1, DEFAULT_FAOR: 4, DEFAULT_FLOT: 4, DEFAULT_MEZ_LVL: 4,
+  cmdsOn: false,
+};
+
+function defaultF18() {
+  const cmds = { delay: F18_CMDS_DEFAULTS.delay };
+  for (const p of F18_PROGRAMS) cmds[p] = { ...F18_CMDS_DEFAULTS[p] };
+  return { ...F18_DEFAULTS, cmds };
+}
+
+// ---- F-16C ----
+const F16_PROGRAMS = ["MAN1", "MAN2", "MAN3", "MAN4", "MAN5", "MAN6", "AUTO1", "AUTO2", "AUTO3", "BYP"];
+const F16_PROGRAM_LABELS = { MAN1: "MAN 1", MAN2: "MAN 2", MAN3: "MAN 3", MAN4: "MAN 4",
+  MAN5: "MAN 5", MAN6: "MAN 6", AUTO1: "AUTO 1", AUTO2: "AUTO 2", AUTO3: "AUTO 3", BYP: "BYPASS" };
+const F16_CONS = ["chaff", "flare", "other1", "other2"];
+const F16_CONS_LABELS = { chaff: "Диполи (Chaff)", flare: "Ловушки (Flare)",
+  other1: "Other 1", other2: "Other 2" };
+const F16_PARAMS = [["BQ", "Burst qty"], ["BI", "Burst int, с"], ["SQ", "Salvo qty"], ["SI", "Salvo int, с"]];
+
+// DCS defaults (CoreMods/aircraft/F-16C/DTC/MPD/CMDS_defs.lua)
+function f16Prog(chaff, flare, other1, other2) {
+  const o = {};
+  const src = { chaff, flare, other1, other2 };
+  for (const c of F16_CONS) {
+    const [bq, bi, sq, si] = src[c];
+    o[c + "BQ"] = bq; o[c + "BI"] = bi; o[c + "SQ"] = sq; o[c + "SI"] = si;
+  }
+  return o;
+}
+const F16_OTHER0 = [0, 0.02, 0, 0.5];   // Other1/Other2 defaults in every program
+const F16_CMDS_DEFAULTS = {
+  delay: 0,
+  bingo: { ChaffNum: 10, FlaresNum: 10, Other1Num: 0, Other2Num: 0, FDBK: true, REQCTR: true, BINGO: true },
+  MAN1:  f16Prog([1, 0.02, 10, 1.00], [1, 0.02, 10, 1.00], F16_OTHER0, F16_OTHER0),
+  MAN2:  f16Prog([1, 0.02, 10, 0.50], [1, 0.02, 10, 0.50], F16_OTHER0, F16_OTHER0),
+  MAN3:  f16Prog([2, 0.10, 5, 1.00],  [2, 0.10, 5, 1.00],  F16_OTHER0, F16_OTHER0),
+  MAN4:  f16Prog([2, 0.10, 5, 0.50],  [2, 0.10, 5, 0.50],  F16_OTHER0, F16_OTHER0),
+  MAN5:  f16Prog([2, 0.05, 20, 0.75], [2, 0.05, 20, 0.75], F16_OTHER0, F16_OTHER0),
+  MAN6:  f16Prog([1, 0.02, 1, 0.50],  [1, 0.02, 1, 0.50],  F16_OTHER0, F16_OTHER0),
+  AUTO1: f16Prog([1, 0.02, 4, 1.50],  [0, 0, 0, 0],        F16_OTHER0, F16_OTHER0),
+  AUTO2: f16Prog([1, 0.02, 6, 1.00],  [0, 0, 0, 0],        F16_OTHER0, F16_OTHER0),
+  AUTO3: f16Prog([1, 0.02, 8, 0.50],  [0, 0, 0, 0],        F16_OTHER0, F16_OTHER0),
+  BYP:   f16Prog([1, 0.02, 1, 0.50],  [1, 0.02, 1, 0.50],  F16_OTHER0, F16_OTHER0),
+};
+
+// Symbology colors (CoreMods/aircraft/F-16C/DTC/COLR/COLR_defs.lua); index+1 goes to the DTC.
+const F16_COLORS = ["White", "Red", "Green", "Cyan", "Yellow", "Magenta", "Blue", "Gray"];
+const F16_COLOR_LABELS = { White: "Белый", Red: "Красный", Green: "Зелёный", Cyan: "Голубой",
+  Yellow: "Жёлтый", Magenta: "Пурпурный", Blue: "Синий", Gray: "Серый" };
+const F16_COLR_GROUPS = [
+  ["MFDFCR", [
+    ["MFDFCR_NonSymbolOrientedText", "White"], ["MFDFCR_SOIBox", "White"], ["MFDFCR_OFFLetters", "White"],
+    ["MFDFCR_OSBSelectionFlash", "Gray"], ["MFDFCR_AntennaAzimuthElevationIndicators", "Cyan"],
+    ["MFDFCR_AntennaAzimuthElevationScaleMarks", "Cyan"], ["MFDFCR_AzimuthScanLimitLines", "Cyan"],
+    ["MFDFCR_RangeMarks", "Green"], ["MFDFCR_HorizonLine", "Blue"], ["MFDFCR_AcquisitionCursor", "White"],
+    ["MFDFCR_AcquisitionCursorMaximumSearchAltitude", "White"],
+    ["MFDFCR_AcquisitionCursorMinimumSearchAltitudePositive", "Cyan"],
+    ["MFDFCR_AcquisitionCursorMinimumSearchAltitudeNegative", "Red"], ["MFDFCR_ExpandBox", "White"],
+    ["MFDFCR_AllowableSteeringErrorCircle", "White"], ["MFDFCR_AttackSteeringCue", "White"],
+    ["MFDFCR_AttackSteeringCueLimitCross", "White"], ["MFDFCR_DynamicLaunchZone", "White"],
+    ["MFDFCR_TrackedTargetSymbol", "Yellow"], ["MFDFCR_SystemTrackTargetSymbol", "White"],
+    ["MFDFCR_TOICircle", "White"], ["MFDFCR_AIM120KillX", "Red"],
+    ["MFDFCR_FriendIFFReply", "Green"], ["MFDFCR_UnknownIFFReply", "Yellow"],
+  ]],
+  ["HSDHAD", [
+    ["HSDHAD_Ownship", "Cyan"], ["HSDHAD_RangeRingsCentered", "Magenta"],
+    ["HSDHAD_RangeRingsDepressed", "Magenta"], ["HSDHAD_FCRSensorVolume", "Cyan"],
+    ["HSDHAD_FCRAAGhostCursor", "White"], ["HSDHAD_FCRAGGhostCursor", "White"],
+    ["HSDHAD_AcquisitionCursor", "White"], ["HSDHAD_AircraftReferenceSymbol", "Cyan"],
+    ["HSDHAD_AircraftReferenceSteeringBars", "Cyan"], ["HSDHAD_BullseyeLineOfSight", "Cyan"],
+    ["HSDHAD_BullseyeSteeringSymbol", "Cyan"], ["HSDHAD_SelectedSteerpoint", "White"],
+    ["HSDHAD_ActiveNavigationRouteSteerpoints", "White"], ["HSDHAD_ActiveNavigationRouteLine", "White"],
+    ["HSDHAD_InactiveNavigationRouteSteerpoints", "Gray"], ["HSDHAD_InactiveNavigationRouteLine", "Gray"],
+    ["HSDHAD_GeographicLine1", "Gray"], ["HSDHAD_GeographicLine2", "Gray"],
+    ["HSDHAD_GeographicLine3", "Gray"], ["HSDHAD_GeographicLine4", "Gray"],
+    ["HSDHAD_OwnshipMarkpoint", "Cyan"], ["HSDHAD_PreplannedThreatOutside", "Yellow"],
+    ["HSDHAD_PreplannedThreatInside", "Red"], ["HSDHAD_SEADTargetOfInterestBox", "White"],
+  ]],
+  ["MISC", [
+    ["MISC_TNDLWingmanSymbol", "Cyan"], ["MISC_TNDLMarkpoint", "White"],
+    ["MISC_TNDLSEADTargetFriendly", "Green"], ["MISC_TNDLSEADTargetNonfriendly", "Yellow"],
+    ["MISC_SMDLWingman14", "Cyan"], ["MISC_SMDLWingman58", "Cyan"], ["MISC_SMDLWingman18outside", "Cyan"],
+    ["MISC_SMDLWingmanAATargetOfInterest", "Yellow"],
+    ["MISC_SMDLWingmanAATargetOfInterestoutside", "Yellow"],
+    ["MISC_SMDLWingmanSEADTargetOfInterestoutside", "Magenta"], ["MISC_SMDLMarkpoint", "Magenta"],
+    ["MISC_SMDLSEADTargetFriendly", "Green"], ["MISC_SMDLSEADTargetNonfriendly", "Magenta"],
+    ["MISC_TGPAttitudeAdvisoryBox", "Red"], ["MISC_WPNAGM65MissileSymbology", "White"],
+    ["MISC_WPNAGM88DetectedThreatsStatusBoxHAS", "Green"], ["MISC_WPNAGM88LaunchStatusDividerLinePOS", "Green"],
+  ]],
+];
+const F16_COLR_DEFAULTS = {};
+for (const [, entries] of F16_COLR_GROUPS) {
+  for (const [key, color] of entries) F16_COLR_DEFAULTS[key] = F16_COLORS.indexOf(color) + 1;
+}
+
+function defaultF16() {
+  const cmds = { delay: F16_CMDS_DEFAULTS.delay, bingo: { ...F16_CMDS_DEFAULTS.bingo } };
+  for (const p of F16_PROGRAMS) cmds[p] = { ...F16_CMDS_DEFAULTS[p] };
+  return { cmdsOn: false, colrOn: false, cmds, colr: { ...F16_COLR_DEFAULTS } };
+}
+
+// ---------- state ----------
+
+function defaultState() {
+  const displays = {};
+  for (const [seat, name] of DISPLAYS) {
+    displays[seat] = displays[seat] || {};
+    displays[seat][name] = [null, null, null]; // slots: null | {page, mode}
+  }
+  return {
+    ...DEFAULTS,
+    displays,
+    misc: { Bingo: null, CARAALOW: null, TACANChannel: null, TACANBand: "X", TACANMode: "TR", TACANOn: true, ILSFrequency: null, TGPCode: null },
+    f18: defaultF18(),
+    f16: defaultF16(),
+  };
+}
+
+let state = defaultState();
+let sourceText = null;   // file content the state was parsed from (null: fresh)
+let fileHandle = null;   // File System Access handle when the browser allows direct save
+
+// ---------- Lua parsing helpers ----------
+
+// Matching "}" for the "{" at startIdx, skipping strings and comments.
+function matchBrace(text, startIdx) {
+  let depth = 0, i = startIdx;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"' || c === "'") {
+      const q = c;
+      i++;
+      while (i < text.length && text[i] !== q) i += text[i] === "\\" ? 2 : 1;
+    } else if (c === "-" && text[i + 1] === "-") {
+      const eol = text.indexOf("\n", i);
+      i = eol === -1 ? text.length : eol;
+    } else if (c === "{") {
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+// Copy of `text` with every Lua comment blanked out (same length, strings preserved):
+// regex searches must not hit the examples inside the file's header comments.
+function maskComments(text) {
+  const out = text.split("");
+  let i = 0;
+  while (i < out.length) {
+    const c = out[i];
+    if (c === '"' || c === "'") {
+      const q = c;
+      i++;
+      while (i < out.length && out[i] !== q) i += out[i] === "\\" ? 2 : 1;
+      i++;
+    } else if (c === "-" && out[i + 1] === "-") {
+      let j = i + 2;
+      if (out[j] === "[" && out[j + 1] === "[") {           // long comment --[[ ... ]]
+        const end = text.indexOf("]]", j + 2);
+        j = end === -1 ? out.length : end + 2;
+      } else {
+        const eol = text.indexOf("\n", i);
+        j = eol === -1 ? out.length : eol;
+      }
+      for (let k = i; k < j; k++) if (out[k] !== "\n") out[k] = " ";
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return out.join("");
+}
+
+function luaScalar(block, key) {
+  const m = new RegExp(`\\b${key}\\s*=\\s*"([^"]*)"`).exec(block)
+    || new RegExp(`\\b${key}\\s*=\\s*(-?[\\d.]+)`).exec(block)
+    || new RegExp(`\\b${key}\\s*=\\s*(true|false)`).exec(block);
+  return m ? m[1] : null;
+}
+
+function luaTableText(block, key) {
+  const m = new RegExp(`\\b${key}\\s*=\\s*\\{`).exec(block);
+  if (!m) return null;
+  const open = m.index + m[0].length - 1;
+  const close = matchBrace(block, open);
+  return close === -1 ? null : block.slice(open + 1, close);
+}
+
+// Text of the block `["<typeName>"] = { ... }` inside `text`, or null.
+function findBlockText(text, typeName) {
+  const esc = typeName.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+  const masked = maskComments(text);
+  const m = new RegExp(`\\[\\s*"${esc}"\\s*\\]\\s*=\\s*\\{`).exec(masked);
+  if (!m) return null;
+  const open = m.index + m[0].length - 1;
+  const close = matchBrace(text, open);
+  return close === -1 ? null : text.slice(open, close + 1);
+}
+
+function parseF15EBlock(block, st) {
+  for (const k of ["TARGETS", "ROUTE_B_NM", "ROUTE_A_NM", "THREATS"]) {
+    const v = luaScalar(block, k);
+    if (v !== null && isFinite(Number(v))) st[k] = Number(v);
+  }
+  for (const k of ["RING_COLOR", "RING_STYLE", "FRONT_COLOR", "FRONT_STYLE"]) {
+    const v = luaScalar(block, k);
+    if (v !== null) st[k] = String(v).toLowerCase();
+  }
+  const dsp = luaTableText(block, "DISPLAYS");
+  if (dsp !== null) {
+    for (const [seat, name] of DISPLAYS) {
+      const seatText = luaTableText(dsp, seat);
+      if (seatText === null) continue;
+      const dispText = luaTableText(seatText, name);
+      if (dispText === null) continue;
+      const slots = [];
+      const re = /\{[^}]*\bpage\s*=\s*"([A-Za-z]+)"[^}]*\bmode\s*=\s*"([A-Za-z]+)"[^}]*\}/g;
+      let m;
+      while ((m = re.exec(dispText)) && slots.length < 3) {
+        slots.push({ page: m[1].toUpperCase(), mode: m[2].toUpperCase() });
+      }
+      for (let i = 0; i < slots.length; i++) st.displays[seat][name][i] = slots[i];
+    }
+  }
+  const misc = luaTableText(block, "MISC");
+  if (misc !== null) {
+    for (const k of ["Bingo", "CARAALOW", "TACANChannel", "ILSFrequency", "TGPCode"]) {
+      const v = luaScalar(misc, k);
+      if (v !== null && isFinite(Number(v))) st.misc[k] = Number(v);
+    }
+    const band = luaScalar(misc, "TACANBand");
+    if (band !== null) st.misc.TACANBand = String(band).toUpperCase() === "Y" ? "Y" : "X";
+    const mode = luaScalar(misc, "TACANMode");
+    if (mode !== null) st.misc.TACANMode = String(mode).toUpperCase() === "AA" ? "AA" : "TR";
+    const on = luaScalar(misc, "TACANOn");
+    if (on !== null) st.misc.TACANOn = on === "true";
+  }
+  return st;
+}
+
+function parseF18Block(block, st) {
+  const f = st.f18;
+  for (const k of ["GPS1_MAX", "GPS2_MAX", "THREATS", "MIN_RANGE", "THREAT_LEVEL",
+    "DEFAULT_CORRIDOR", "DEFAULT_FAOR", "DEFAULT_FLOT", "DEFAULT_MEZ_LVL"]) {
+    const v = luaScalar(block, k);
+    if (v !== null && isFinite(Number(v))) f[k] = Number(v);
+  }
+  const cmds = luaTableText(block, "CMDS");
+  if (cmds !== null) {
+    f.cmdsOn = true;
+    const delay = luaScalar(cmds, "delay");
+    if (delay !== null && isFinite(Number(delay))) f.cmds.delay = Number(delay);
+    for (const p of F18_PROGRAMS) {
+      const pt = luaTableText(cmds, p);
+      if (pt === null) continue;
+      for (const k of ["chaffQ", "chaffR", "chaffI", "flareQ", "other1Q", "other2Q"]) {
+        const v = luaScalar(pt, k);
+        if (v !== null && isFinite(Number(v))) f.cmds[p][k] = Number(v);
+      }
+    }
+  }
+  return st;
+}
+
+function parseF16Block(block, st) {
+  const f = st.f16;
+  const cmds = luaTableText(block, "CMDS");
+  if (cmds !== null) {
+    f.cmdsOn = true;
+    const delay = luaScalar(cmds, "delay");
+    if (delay !== null && isFinite(Number(delay))) f.cmds.delay = Number(delay);
+    const bingo = luaTableText(cmds, "bingo");
+    if (bingo !== null) {
+      for (const k of ["ChaffNum", "FlaresNum", "Other1Num", "Other2Num"]) {
+        const v = luaScalar(bingo, k);
+        if (v !== null && isFinite(Number(v))) f.cmds.bingo[k] = Number(v);
+      }
+      for (const k of ["FDBK", "REQCTR", "BINGO"]) {
+        const v = luaScalar(bingo, k);
+        if (v !== null) f.cmds.bingo[k] = v === "true";
+      }
+    }
+    for (const p of F16_PROGRAMS) {
+      const pt = luaTableText(cmds, p);
+      if (pt === null) continue;
+      for (const c of F16_CONS) {
+        for (const [s] of F16_PARAMS) {
+          const v = luaScalar(pt, c + s);
+          if (v !== null && isFinite(Number(v))) f.cmds[p][c + s] = Number(v);
+        }
+      }
+    }
+  }
+  const colr = luaTableText(block, "COLR");
+  if (colr !== null) {
+    f.colrOn = true;
+    for (const key of Object.keys(f.colr)) {
+      const v = luaScalar(colr, key);
+      if (v !== null && isFinite(Number(v))) {
+        f.colr[key] = Math.max(1, Math.min(8, Math.round(Number(v))));
+      }
+    }
+  }
+  return st;
+}
+
+// ---------- Lua generation ----------
+
+function genBlock(st) {
+  const L = [];
+  L.push('        ["F-15ESE"] = {');
+  L.push(`            ROUTE_A_NM = ${st.ROUTE_A_NM}, ROUTE_B_NM = ${st.ROUTE_B_NM}, TARGETS = ${st.TARGETS}, THREATS = ${st.THREATS},`);
+  L.push(`            FRONT_COLOR = "${st.FRONT_COLOR.toUpperCase()}", FRONT_STYLE = "${st.FRONT_STYLE}",`);
+  L.push(`            RING_COLOR = "${st.RING_COLOR.toUpperCase()}", RING_STYLE = "${st.RING_STYLE}",`);
+  const seats = [];
+  for (const seat of ["Pilot", "WSO"]) {
+    const rows = [];
+    for (const [s, name] of DISPLAYS) {
+      if (s !== seat) continue;
+      const slots = st.displays[seat][name].filter(Boolean);
+      if (!slots.length) continue;
+      const list = slots.map(sl => `{ page = "${sl.page}", mode = "${sl.mode}" }`).join(", ");
+      rows.push(`                    ${name} = { ${list} },`);
+    }
+    if (rows.length) seats.push(`                ${seat} = {\n${rows.join("\n")}\n                },`);
+  }
+  if (seats.length) L.push(`            DISPLAYS = {\n${seats.join("\n")}\n            },`);
+  const m = st.misc, mm = [];
+  if (m.Bingo !== null) mm.push(`Bingo = ${m.Bingo}`);
+  if (m.CARAALOW !== null) mm.push(`CARAALOW = ${m.CARAALOW}`);
+  if (m.TACANChannel !== null) {
+    mm.push(`TACANChannel = ${m.TACANChannel}`, `TACANBand = "${m.TACANBand}"`,
+      `TACANMode = "${m.TACANMode}"`, `TACANOn = ${m.TACANOn}`);
+  }
+  if (m.ILSFrequency !== null) mm.push(`ILSFrequency = ${m.ILSFrequency}`);
+  if (m.TGPCode !== null) mm.push(`TGPCode = ${m.TGPCode}`);
+  if (mm.length) L.push(`            MISC = { ${mm.join(", ")} },`);
+  L.push("        },");
+  return L.join("\n");
+}
+
+function genF18Block(st) {
+  const f = st.f18;
+  const L = [];
+  L.push('        ["FA-18C_hornet"] = {');
+  L.push(`            GPS1_MAX = ${f.GPS1_MAX}, GPS2_MAX = ${f.GPS2_MAX},`);
+  L.push(`            THREATS = ${f.THREATS}, MIN_RANGE = ${f.MIN_RANGE}, THREAT_LEVEL = ${f.THREAT_LEVEL},`);
+  L.push(`            DEFAULT_CORRIDOR = ${f.DEFAULT_CORRIDOR}, DEFAULT_FAOR = ${f.DEFAULT_FAOR}, DEFAULT_FLOT = ${f.DEFAULT_FLOT}, DEFAULT_MEZ_LVL = ${f.DEFAULT_MEZ_LVL},`);
+  if (f.cmdsOn) {
+    const rows = [`                delay = ${f.cmds.delay},`];
+    for (const p of F18_PROGRAMS) {
+      const c = f.cmds[p];
+      rows.push(`                ${p} = { chaffQ = ${c.chaffQ}, chaffR = ${c.chaffR}, chaffI = ${c.chaffI}, flareQ = ${c.flareQ}, other1Q = ${c.other1Q}, other2Q = ${c.other2Q} },`);
+    }
+    L.push(`            CMDS = {\n${rows.join("\n")}\n            },`);
+  }
+  L.push("        },");
+  return L.join("\n");
+}
+
+function genF16Block(st) {
+  const f = st.f16;
+  const L = [];
+  L.push('        ["F-16C_50"] = {');
+  if (f.cmdsOn) {
+    const b = f.cmds.bingo;
+    const rows = [`                delay = ${f.cmds.delay},`,
+      `                bingo = { ChaffNum = ${b.ChaffNum}, FlaresNum = ${b.FlaresNum}, Other1Num = ${b.Other1Num}, Other2Num = ${b.Other2Num}, FDBK = ${b.FDBK}, REQCTR = ${b.REQCTR}, BINGO = ${b.BINGO} },`];
+    for (const p of F16_PROGRAMS) {
+      const c = f.cmds[p];
+      const parts = [];
+      for (const cons of F16_CONS) {
+        for (const [s] of F16_PARAMS) parts.push(`${cons}${s} = ${c[cons + s]}`);
+      }
+      rows.push(`                ${p} = { ${parts.join(", ")} },`);
+    }
+    L.push(`            CMDS = {\n${rows.join("\n")}\n            },`);
+  }
+  if (f.colrOn) {
+    const rows = [];
+    for (const [group, entries] of F16_COLR_GROUPS) {
+      const parts = entries.map(([key]) => `${key} = ${f.colr[key]}`);
+      rows.push(`                -- ${group}\n                ${parts.join(", ")},`);
+    }
+    L.push(`            COLR = {\n${rows.join("\n")}\n            },`);
+  }
+  L.push("        },");
+  return L.join("\n");
+}
+
+// All blocks the configurator owns, keyed by aircraft type.
+function genBlocks(st) {
+  return { "F-15ESE": genBlock(st), "FA-18C_hornet": genF18Block(st), "F-16C_50": genF16Block(st) };
+}
+
+// Replace / insert the given blocks inside config.user.lua text; fresh file when none.
+// blocks = { "<type>": blockText, ... }.
+function spliceConfig(original, blocks) {
+  if (typeof blocks === "string") blocks = { "F-15ESE": blocks };   // legacy single-block call
+  let text = original;
+  if (text) {
+    for (const [type, blockText] of Object.entries(blocks)) {
+      const esc = type.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+      const masked = maskComments(text);
+      const m = new RegExp(`\\[\\s*"${esc}"\\s*\\]\\s*=\\s*\\{`).exec(masked);
+      if (m) {
+        const open = m.index + m[0].length - 1;
+        const close = matchBrace(text, open);
+        if (close !== -1) {
+          const tail = text[close + 1] === "," ? close + 2 : close + 1;
+          text = text.slice(0, m.index) + blockText.trim() + text.slice(tail);
+          continue;
+        }
+      }
+      const optM = /OPTIONS\s*=\s*\{/.exec(masked);
+      if (optM) {
+        const at = optM.index + optM[0].length;
+        text = text.slice(0, at) + "\n" + blockText + text.slice(at);
+        continue;
+      }
+      const retM = /return\s*\{/.exec(masked);
+      if (retM) {
+        const at = retM.index + retM[0].length;
+        text = text.slice(0, at) + "\n    OPTIONS = {\n" + blockText + "\n    }," + text.slice(at);
+      }
+    }
+    return text;
+  }
+  const all = Object.values(blocks).join("\n");
+  return "-- SarmatDTC user settings (created by the configurator).\n"
+    + "-- Same shape as config.lua: only what you change. See config.lua for the full list.\n"
+    + "return {\n    OPTIONS = {\n" + all + "\n    },\n}\n";
+}
+
+// ---------- UI ----------
+
+const $ = (id) => document.getElementById(id);
+const toastEl = $("toast");
+let toastTimer = null;
+function toast(msg, kind) {
+  toastEl.textContent = msg;
+  toastEl.className = "toast show" + (kind ? " " + kind : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.className = "toast"; }, 3500);
+}
+
+function previewSvg(color, style, circle) {
+  const dash = DASHES[style] || "none";
+  const dashAttr = dash === "none" ? "" : ` stroke-dasharray="${dash}"`;
+  const shape = circle
+    ? `<circle cx="45" cy="19" r="13" fill="none" stroke="${color}" stroke-width="2.5"${dashAttr}/>`
+    : `<line x1="8" y1="19" x2="82" y2="19" stroke="${color}" stroke-width="2.5"${dashAttr} stroke-linecap="round"/>`;
+  return `<svg width="90" height="38" viewBox="0 0 90 38" aria-hidden="true">${shape}</svg>`;
+}
+
+function renderPreviews() {
+  $("ringPreview").innerHTML = previewSvg(state.RING_COLOR, state.RING_STYLE, true);
+  $("frontPreview").innerHTML = previewSvg(state.FRONT_COLOR, state.FRONT_STYLE, false);
+}
+
+function buildDisplays() {
+  const host = $("displaysHost");
+  host.innerHTML = "";
+  const pageOpts = ['<option value="">—</option>']
+    .concat(PAGES.map(p => `<option value="${p}">${p}</option>`)).join("");
+  const modeOpts = MODES.map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+  for (const [seat, name, label] of DISPLAYS) {
+    const div = document.createElement("div");
+    div.className = "disp";
+    const grid = ['<h3>' + label + "</h3>", '<div class="grid">',
+      '<div class="head"></div><div class="head">Слот 1 · страница / режим</div>',
+      '<div class="head">Слот 2</div><div class="head">Слот 3</div>'];
+    grid.push(`<div></div>`);
+    for (let i = 0; i < 3; i++) {
+      grid.push(`<div class="slot">
+        <select data-seat="${seat}" data-disp="${name}" data-slot="${i}" data-kind="page" aria-label="${label} слот ${i + 1} страница">${pageOpts}</select>
+        <select data-seat="${seat}" data-disp="${name}" data-slot="${i}" data-kind="mode" aria-label="${label} слот ${i + 1} режим">${modeOpts}</select>
+      </div>`);
+    }
+    grid.push("</div>");
+    div.innerHTML = grid.join("");
+    host.appendChild(div);
+  }
+  host.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLSelectElement) || !t.dataset.disp) return;
+    const { seat, disp, slot, kind } = t.dataset;
+    const cur = state.displays[seat][disp][Number(slot)] || { page: "", mode: "NAV" };
+    cur[kind] = t.value;
+    state.displays[seat][disp][Number(slot)] = cur.page ? cur : null;
+    markDirty();
+  });
+}
+
+function stateToUi() {
+  $("inTargets").value = state.TARGETS;
+  $("inRouteBNm").value = state.ROUTE_B_NM;
+  $("inRouteANm").value = state.ROUTE_A_NM;
+  $("inThreats").value = state.THREATS;
+  $("inRingColor").value = state.RING_COLOR;
+  $("inRingStyle").value = state.RING_STYLE;
+  $("inFrontColor").value = state.FRONT_COLOR;
+  $("inFrontStyle").value = state.FRONT_STYLE;
+  for (const [seat, name] of DISPLAYS) {
+    for (let i = 0; i < 3; i++) {
+      const slot = state.displays[seat][name][i];
+      const page = document.querySelector(`select[data-seat="${seat}"][data-disp="${name}"][data-slot="${i}"][data-kind="page"]`);
+      const mode = document.querySelector(`select[data-seat="${seat}"][data-disp="${name}"][data-slot="${i}"][data-kind="mode"]`);
+      if (page) page.value = slot ? slot.page : "";
+      if (mode) mode.value = slot ? slot.mode : "NAV";
+    }
+  }
+  $("inBingo").value = state.misc.Bingo ?? "";
+  $("inCara").value = state.misc.CARAALOW ?? "";
+  $("inTacanCh").value = state.misc.TACANChannel ?? "";
+  $("inTacanBand").value = state.misc.TACANBand;
+  $("inTacanMode").value = state.misc.TACANMode;
+  $("inTacanOn").checked = state.misc.TACANOn;
+  $("inIls").value = state.misc.ILSFrequency ?? "";
+  $("inTgp").value = state.misc.TGPCode ?? "";
+  f18ToUi();
+  f16ToUi();
+  renderPreviews();
+}
+
+// ---- F/A-18 UI ----
+
+let curProgram = "MAN_1";
+
+function f18ToUi() {
+  const f = state.f18;
+  $("inF18DefCorr").value = String(f.DEFAULT_CORRIDOR);
+  $("inF18DefFaor").value = String(f.DEFAULT_FAOR);
+  $("inF18DefFlot").value = String(f.DEFAULT_FLOT);
+  $("inF18DefMez").value = String(f.DEFAULT_MEZ_LVL);
+  $("inF18Gps1Max").value = f.GPS1_MAX;
+  $("inF18Gps2Max").value = f.GPS2_MAX;
+  $("inF18Threats").value = f.THREATS;
+  $("inF18MinRange").value = f.MIN_RANGE;
+  $("inF18ThreatLvl").value = String(f.THREAT_LEVEL);
+  $("inF18CmdsOn").checked = f.cmdsOn;
+  $("inF18CmdsDelay").value = f.cmds.delay;
+  $("inF18CmdsProg").value = curProgram;
+  programToUi();
+}
+
+function programToUi() {
+  const c = state.f18.cmds[curProgram];
+  $("inF18BurstR").value = c.chaffR;
+  $("inF18BurstI").value = c.chaffI;
+  $("inF18ChaffQ").value = c.chaffQ;
+  $("inF18FlareQ").value = c.flareQ;
+  $("inF18Other1Q").value = c.other1Q;
+  $("inF18Other2Q").value = c.other2Q;
+}
+
+function programFromUi() {
+  const c = state.f18.cmds[curProgram];
+  c.chaffR = numOrNull("inF18BurstR") ?? c.chaffR;
+  c.chaffI = numOrNull("inF18BurstI") ?? c.chaffI;
+  c.chaffQ = numOrNull("inF18ChaffQ") ?? c.chaffQ;
+  c.flareQ = numOrNull("inF18FlareQ") ?? c.flareQ;
+  c.other1Q = numOrNull("inF18Other1Q") ?? c.other1Q;
+  c.other2Q = numOrNull("inF18Other2Q") ?? c.other2Q;
+}
+
+function f18FromUi() {
+  const f = state.f18;
+  f.DEFAULT_CORRIDOR = Number($("inF18DefCorr").value);
+  f.DEFAULT_FAOR = Number($("inF18DefFaor").value);
+  f.DEFAULT_FLOT = Number($("inF18DefFlot").value);
+  f.DEFAULT_MEZ_LVL = Number($("inF18DefMez").value);
+  f.GPS1_MAX = Math.max(0, Math.min(100, Math.round(numOrNull("inF18Gps1Max") ?? F18_DEFAULTS.GPS1_MAX)));
+  f.GPS2_MAX = Math.max(0, Math.min(100, Math.round(numOrNull("inF18Gps2Max") ?? F18_DEFAULTS.GPS2_MAX)));
+  f.THREATS = Math.max(0, Math.min(40, Math.round(numOrNull("inF18Threats") ?? F18_DEFAULTS.THREATS)));
+  f.MIN_RANGE = Math.max(0, numOrNull("inF18MinRange") ?? F18_DEFAULTS.MIN_RANGE);
+  f.THREAT_LEVEL = Math.max(1, Math.min(3, Math.round(numOrNull("inF18ThreatLvl") ?? F18_DEFAULTS.THREAT_LEVEL)));
+  f.cmdsOn = $("inF18CmdsOn").checked;
+  f.cmds.delay = Math.max(0, Math.min(10, Math.round(numOrNull("inF18CmdsDelay") ?? F18_CMDS_DEFAULTS.delay)));
+  programFromUi();
+}
+
+// ---- F-16 UI ----
+
+let curProgram16 = "MAN1";
+
+// One row per consumable: Burst Qty / Burst Int / Salvo Qty / Salvo Int of the selected program.
+function buildF16Cons() {
+  const host = $("f16ConsHost");
+  host.innerHTML = "";
+  for (const cons of F16_CONS) {
+    const div = document.createElement("div");
+    div.className = "row";
+    const inputs = F16_PARAMS.map(([s, label]) =>
+      `<input type="number" id="inF16_${cons}_${s}" min="0" max="${s.endsWith("Q") ? 99 : 10}" step="${s.endsWith("Q") ? 1 : 0.01}" aria-label="${F16_CONS_LABELS[cons]} ${label}">`
+    ).join("");
+    div.innerHTML = `<label>${F16_CONS_LABELS[cons]}<small>Burst Qty / Burst Int (с) / Salvo Qty / Salvo Int (с).</small></label>
+      <div class="ctrl">${inputs}</div>`;
+    host.appendChild(div);
+  }
+  host.addEventListener("input", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    const m = /^inF16_(chaff|flare|other1|other2)_(BQ|BI|SQ|SI)$/.exec(t.id);
+    if (!m) return;
+    const v = numOrNull(t.id);
+    if (v !== null) state.f16.cmds[curProgram16][m[1] + m[2]] = v;
+    markDirty();
+  });
+}
+
+// The 65 COLOR selects, grouped MFDFCR / HSDHAD / MISC.
+function buildF16Colr() {
+  const host = $("f16ColrHost");
+  host.innerHTML = "";
+  const opts = F16_COLORS.map((c, i) => `<option value="${i + 1}">${F16_COLOR_LABELS[c]}</option>`).join("");
+  for (const [group, entries] of F16_COLR_GROUPS) {
+    const h = document.createElement("h3");
+    h.className = "colr-group";
+    h.textContent = group;
+    host.appendChild(h);
+    const grid = document.createElement("div");
+    grid.className = "colr-grid";
+    for (const [key] of entries) {
+      const item = document.createElement("label");
+      item.className = "colr-item";
+      item.innerHTML = `<span title="${key}">${key.replace(/^(MFDFCR|HSDHAD|MISC)_/, "")}</span>
+        <select data-colr="${key}" aria-label="${key}">${opts}</select>`;
+      grid.appendChild(item);
+    }
+    host.appendChild(grid);
+  }
+  host.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (t instanceof HTMLSelectElement && t.dataset.colr) {
+      state.f16.colr[t.dataset.colr] = Number(t.value);
+      markDirty();
+    }
+  });
+}
+
+function f16ProgramToUi() {
+  const c = state.f16.cmds[curProgram16];
+  for (const cons of F16_CONS) {
+    for (const [s] of F16_PARAMS) $(`inF16_${cons}_${s}`).value = c[cons + s];
+  }
+}
+
+function f16ProgramFromUi() {
+  const c = state.f16.cmds[curProgram16];
+  for (const cons of F16_CONS) {
+    for (const [s] of F16_PARAMS) {
+      const v = numOrNull(`inF16_${cons}_${s}`);
+      if (v !== null) c[cons + s] = v;
+    }
+  }
+}
+
+function f16ToUi() {
+  const f = state.f16;
+  const b = f.cmds.bingo;
+  $("inF16CmdsOn").checked = f.cmdsOn;
+  $("inF16BingoChaff").value = b.ChaffNum;
+  $("inF16BingoFlare").value = b.FlaresNum;
+  $("inF16BingoOther1").value = b.Other1Num;
+  $("inF16BingoOther2").value = b.Other2Num;
+  $("inF16BingoFdbk").checked = b.FDBK;
+  $("inF16BingoReqctr").checked = b.REQCTR;
+  $("inF16BingoBingo").checked = b.BINGO;
+  $("inF16CmdsDelay").value = String(f.cmds.delay);
+  $("inF16CmdsProg").value = curProgram16;
+  f16ProgramToUi();
+  $("inF16ColrOn").checked = f.colrOn;
+  for (const [key, value] of Object.entries(f.colr)) {
+    const sel = document.querySelector(`select[data-colr="${key}"]`);
+    if (sel) sel.value = String(value);
+  }
+}
+
+function f16FromUi() {
+  const f = state.f16;
+  const b = f.cmds.bingo;
+  f.cmdsOn = $("inF16CmdsOn").checked;
+  b.ChaffNum = Math.max(0, Math.min(99, Math.round(numOrNull("inF16BingoChaff") ?? b.ChaffNum)));
+  b.FlaresNum = Math.max(0, Math.min(99, Math.round(numOrNull("inF16BingoFlare") ?? b.FlaresNum)));
+  b.Other1Num = Math.max(0, Math.min(99, Math.round(numOrNull("inF16BingoOther1") ?? b.Other1Num)));
+  b.Other2Num = Math.max(0, Math.min(99, Math.round(numOrNull("inF16BingoOther2") ?? b.Other2Num)));
+  b.FDBK = $("inF16BingoFdbk").checked;
+  b.REQCTR = $("inF16BingoReqctr").checked;
+  b.BINGO = $("inF16BingoBingo").checked;
+  f.cmds.delay = Number($("inF16CmdsDelay").value);
+  f16ProgramFromUi();
+  f.colrOn = $("inF16ColrOn").checked;
+}
+
+function numOrNull(id) {
+  const v = $(id).value.trim();
+  return v === "" || !isFinite(Number(v)) ? null : Number(v);
+}
+
+function uiToState() {
+  state.TARGETS = Math.max(0, Math.min(99, Math.round(numOrNull("inTargets") ?? DEFAULTS.TARGETS)));
+  state.ROUTE_B_NM = Math.max(0, numOrNull("inRouteBNm") ?? DEFAULTS.ROUTE_B_NM);
+  state.ROUTE_A_NM = Math.max(0, numOrNull("inRouteANm") ?? DEFAULTS.ROUTE_A_NM);
+  state.THREATS = Math.max(0, Math.min(30, Math.round(numOrNull("inThreats") ?? DEFAULTS.THREATS)));
+  state.RING_COLOR = $("inRingColor").value;
+  state.RING_STYLE = $("inRingStyle").value;
+  state.FRONT_COLOR = $("inFrontColor").value;
+  state.FRONT_STYLE = $("inFrontStyle").value;
+  state.misc.Bingo = numOrNull("inBingo");
+  state.misc.CARAALOW = numOrNull("inCara");
+  state.misc.TACANChannel = numOrNull("inTacanCh");
+  state.misc.TACANBand = $("inTacanBand").value;
+  state.misc.TACANMode = $("inTacanMode").value;
+  state.misc.TACANOn = $("inTacanOn").checked;
+  state.misc.ILSFrequency = numOrNull("inIls");
+  state.misc.TGPCode = numOrNull("inTgp");
+  f18FromUi();
+  f16FromUi();
+}
+
+let dirty = false;
+function markDirty() { dirty = true; }
+window.addEventListener("beforeunload", (ev) => { if (dirty) ev.preventDefault(); });
+
+// ---------- file IO ----------
+
+async function openFile() {
+  try {
+    if (window.showOpenFilePicker) {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: "Lua", accept: { "text/plain": [".lua"] } }],
+      });
+      const file = await handle.getFile();
+      applyText(await file.text(), file.name);
+      fileHandle = handle;
+      $("btnSave").disabled = false;
+      return;
+    }
+    $("fileInput").click();
+  } catch (e) {
+    if (e && e.name !== "AbortError") toast("Не удалось открыть файл: " + e.message, "err");
+  }
+}
+
+function applyText(text, name) {
+  sourceText = text;
+  state = defaultState();
+  const found = [];
+  const b15 = findBlockText(text, "F-15ESE");
+  if (b15 !== null) { parseF15EBlock(b15, state); found.push("F-15ESE"); }
+  const b18 = findBlockText(text, "FA-18C_hornet");
+  if (b18 !== null) { parseF18Block(b18, state); found.push("FA-18C_hornet"); }
+  const b16 = findBlockText(text, "F-16C_50");
+  if (b16 !== null) { parseF16Block(b16, state); found.push("F-16C_50"); }
+  stateToUi();
+  if (found.length) {
+    $("fileStatus").innerHTML = `Файл: <span class="mono">${name}</span> — загружены разделы: ${found.join(", ")}`;
+    toast("Настройки прочитаны из " + name, "ok");
+  } else {
+    $("fileStatus").innerHTML = `Файл: <span class="mono">${name}</span> — разделов самолётов нет, будут добавлены`;
+    toast("В файле нет разделов самолётов — они будут добавлены при сохранении");
+  }
+  dirty = false;
+}
+
+async function saveFile() {
+  if (!fileHandle) return;
+  uiToState();
+  const text = spliceConfig(sourceText, genBlocks(state));
+  try {
+    const w = await fileHandle.createWritable();
+    await w.write(text);
+    await w.close();
+    sourceText = text;
+    dirty = false;
+    toast("Сохранено. Применится при старте следующей миссии.", "ok");
+  } catch (e) {
+    toast("Не удалось записать файл: " + e.message, "err");
+  }
+}
+
+function downloadFile() {
+  uiToState();
+  const text = spliceConfig(sourceText, genBlocks(state));
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "config.user.lua";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  dirty = false;
+  toast("Файл скачан. Положите его в Scripts\\SarmatDTC\\config.user.lua", "ok");
+}
+
+// ---------- wiring ----------
+
+// ---- aircraft pages (tabs) ----
+const AIRCRAFT_PAGES = [
+  { id: "f15e", label: "F-15E Strike Eagle" },
+  { id: "f18", label: "F/A-18C Hornet" },
+  { id: "f16", label: "F-16C Viper" },
+];
+function buildTabs() {
+  const host = $("acTabs");
+  for (const ac of AIRCRAFT_PAGES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tab";
+    b.dataset.ac = ac.id;
+    b.setAttribute("role", "tab");
+    b.textContent = ac.label;
+    b.addEventListener("click", () => selectAircraft(ac.id));
+    host.appendChild(b);
+  }
+}
+function selectAircraft(id) {
+  for (const p of document.querySelectorAll(".ac-page")) p.hidden = p.dataset.ac !== id;
+  for (const b of document.querySelectorAll("#acTabs .tab")) {
+    const on = b.dataset.ac === id;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  window.scrollTo({ top: 0 });
+}
+buildTabs();
+selectAircraft("f15e");
+
+function fillSelect(id, values, labelFn) {
+  const sel = $(id);
+  sel.innerHTML = "";
+  for (const v of values) {
+    const o = document.createElement("option");
+    o.value = String(v);
+    o.textContent = labelFn ? labelFn(v) : String(v);
+    sel.appendChild(o);
+  }
+}
+fillSelect("inF18DefCorr", [1, 2, 3, 4, 5, 6, 7, 0], (v) => (v === 0 ? "NONE" : "Коридор " + v));
+fillSelect("inF18DefFaor", [1, 2, 3, 4], (v) => (v === 4 ? "NONE" : "FAOR " + v));
+fillSelect("inF18DefFlot", [1, 2, 3, 4], (v) => (v === 4 ? "NONE" : "FLOT " + v));
+fillSelect("inF18DefMez", [1, 2, 3, 4], (v) => (v === 4 ? "NONE" : "Уровень " + v));
+fillSelect("inF18CmdsProg", F18_PROGRAMS, (v) => F18_PROGRAM_LABELS[v] || v);
+fillSelect("inF16CmdsDelay", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], (v) => (v === 0 ? "No Delay" : v + " сек"));
+fillSelect("inF16CmdsProg", F16_PROGRAMS, (v) => F16_PROGRAM_LABELS[v] || v);
+
+buildDisplays();
+buildF16Cons();
+buildF16Colr();
+stateToUi();
+
+const scalarBindings = [
+  ["inTargets", "TARGETS"], ["inRouteBNm", "ROUTE_B_NM"], ["inRouteANm", "ROUTE_A_NM"],
+  ["inThreats", "THREATS"],
+  ["inRingColor", "RING_COLOR"], ["inRingStyle", "RING_STYLE"],
+  ["inFrontColor", "FRONT_COLOR"], ["inFrontStyle", "FRONT_STYLE"],
+];
+for (const [id, key] of scalarBindings) {
+  $(id).addEventListener("input", () => {
+    const el = $(id);
+    state[key] = el.type === "number" ? Number(el.value) : el.value;
+    if (key.startsWith("RING") || key.startsWith("FRONT")) renderPreviews();
+    markDirty();
+  });
+}
+const miscBindings = [
+  ["inBingo", "Bingo"], ["inCara", "CARAALOW"], ["inTacanCh", "TACANChannel"],
+  ["inTacanBand", "TACANBand"], ["inTacanMode", "TACANMode"], ["inIls", "ILSFrequency"], ["inTgp", "TGPCode"],
+];
+for (const [id, key] of miscBindings) {
+  $(id).addEventListener("input", () => {
+    state.misc[key] = $(id).type === "number" ? numOrNull(id) : $(id).value;
+    markDirty();
+  });
+}
+$("inTacanOn").addEventListener("change", () => { state.misc.TACANOn = $("inTacanOn").checked; markDirty(); });
+
+// ---- F/A-18 wiring ----
+
+const f18Bindings = [
+  ["inF18DefCorr", "DEFAULT_CORRIDOR"], ["inF18DefFaor", "DEFAULT_FAOR"],
+  ["inF18DefFlot", "DEFAULT_FLOT"], ["inF18DefMez", "DEFAULT_MEZ_LVL"],
+  ["inF18Gps1Max", "GPS1_MAX"], ["inF18Gps2Max", "GPS2_MAX"],
+  ["inF18Threats", "THREATS"], ["inF18MinRange", "MIN_RANGE"], ["inF18ThreatLvl", "THREAT_LEVEL"],
+];
+for (const [id, key] of f18Bindings) {
+  $(id).addEventListener("input", () => { state.f18[key] = Number($(id).value); markDirty(); });
+}
+$("inF18CmdsOn").addEventListener("change", () => { state.f18.cmdsOn = $("inF18CmdsOn").checked; markDirty(); });
+$("inF18CmdsDelay").addEventListener("input", () => {
+  state.f18.cmds.delay = numOrNull("inF18CmdsDelay") ?? 0; markDirty();
+});
+$("inF18CmdsProg").addEventListener("change", () => {
+  programFromUi();
+  curProgram = $("inF18CmdsProg").value;
+  programToUi();
+});
+for (const [id, key] of [["inF18BurstR", "chaffR"], ["inF18BurstI", "chaffI"], ["inF18ChaffQ", "chaffQ"],
+  ["inF18FlareQ", "flareQ"], ["inF18Other1Q", "other1Q"], ["inF18Other2Q", "other2Q"]]) {
+  $(id).addEventListener("input", () => {
+    const v = numOrNull(id);
+    if (v !== null) state.f18.cmds[curProgram][key] = v;
+    markDirty();
+  });
+}
+
+// ---- F-16 wiring ----
+
+$("inF16CmdsOn").addEventListener("change", () => { state.f16.cmdsOn = $("inF16CmdsOn").checked; markDirty(); });
+$("inF16ColrOn").addEventListener("change", () => { state.f16.colrOn = $("inF16ColrOn").checked; markDirty(); });
+for (const [id, key] of [["inF16BingoChaff", "ChaffNum"], ["inF16BingoFlare", "FlaresNum"],
+  ["inF16BingoOther1", "Other1Num"], ["inF16BingoOther2", "Other2Num"]]) {
+  $(id).addEventListener("input", () => {
+    const v = numOrNull(id);
+    if (v !== null) state.f16.cmds.bingo[key] = Math.max(0, Math.min(99, Math.round(v)));
+    markDirty();
+  });
+}
+for (const [id, key] of [["inF16BingoFdbk", "FDBK"], ["inF16BingoReqctr", "REQCTR"], ["inF16BingoBingo", "BINGO"]]) {
+  $(id).addEventListener("change", () => { state.f16.cmds.bingo[key] = $(id).checked; markDirty(); });
+}
+$("inF16CmdsDelay").addEventListener("change", () => {
+  state.f16.cmds.delay = Number($("inF16CmdsDelay").value); markDirty();
+});
+$("inF16CmdsProg").addEventListener("change", () => {
+  f16ProgramFromUi();
+  curProgram16 = $("inF16CmdsProg").value;
+  f16ProgramToUi();
+});
+
+$("btnOpen").addEventListener("click", openFile);
+$("btnSave").addEventListener("click", saveFile);
+$("btnDownload").addEventListener("click", downloadFile);
+
+// hidden input fallback for browsers without the File System Access API
+const input = document.createElement("input");
+input.type = "file";
+input.accept = ".lua";
+input.id = "fileInput";
+input.hidden = true;
+document.body.appendChild(input);
+input.addEventListener("change", async () => {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  applyText(await f.text(), f.name);
+  fileHandle = null;
+  $("btnSave").disabled = true;
+  toast("Прямая запись недоступна в этом браузере — используйте «Скачать файл».");
+});
+
+// test hook (used by the automated checks, harmless in production)
+window.__sarmat = {
+  getState: () => state,
+  setState: (s) => { state = s; stateToUi(); },
+  genBlock, genF18Block, genF16Block, genBlocks, spliceConfig,
+  parseF15EBlock, parseF18Block, parseF16Block, applyText,
+};
+
+</script>
+</body>
+</html>

@@ -31,6 +31,9 @@
 --                               adLead: the lead unit itself is that AD type
 --   s.sites                     { {x, z, friendly, ad, name}, ... } SAM sites without a live group
 --   s.farps                     { {x, z, friendly, name, kind}, ... } FARPs / FOBs ("FARP" | "FOB")
+--   s.airfields                 { {x, z, friendly, name}, ... } airfields
+--   s.strongholds               { {x, z, friendly, name}, ... } stronghold objectives
+--   s.strongpoints              { {x, z, friendly, name}, ... } alive strongpoints (kind "OP*")
 --   s.spawn                     { x, z, name } own start base, nil if unknown
 --   s.env                       terrain id and terrain callbacks (for lib.elevation/latLon/cartridge)
 -- DCS DTC stores DCS x as `x` and DCS z as `y`.
