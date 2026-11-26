@@ -1,6 +1,7 @@
 -- F-16C: front line as GEO LINES line 1 (points 31..41 of the 31..55 shared with lines 1-4),
--- airfields and FARPs of BOTH sides as DEST PTS (steerpoints 81..99), and enemy SAM threats as
--- THREAT PTS (steerpoints 56..70, with rings).
+-- configurable map objects as DEST PTS (steerpoints 81..99), and enemy SAM threats as
+-- THREAT PTS (steerpoints 56..70, with rings). DEST defaults to airfields and FARPs of both
+-- sides, closest to the front first, with places balanced between the sides.
 -- Format: CoreMods/aircraft/F-16C/DTC/MPD/{GEO_LINES,DEST,THREAT_PTS,CMDS}.lua, COLR/COLR_defs.lua;
 -- MPD is imported only on matching terrain. mirror_* = false: use our data instead of the mission's.
 -- opt.CMDS -> MPD.CMDS (countermeasure programs), opt.COLR -> top-level COLR (symbology colors);
@@ -102,18 +103,66 @@ local function colrNode(c)
     return next(out) and out or nil
 end
 
+local function mapPoints(s, lib, sourceText, side, rangeNm, order)
+    local sourceLists = {
+        { "AIRFIELDS", s.airfields }, { "FARPS", s.farps },
+        { "STRONGPOINTS", s.strongpoints }, { "STRONGHOLDS", s.strongholds },
+    }
+    local sources = "," .. string.upper(tostring(sourceText or "")):gsub("%s", "") .. ","
+    side = string.upper(tostring(side or "ALL"))
+    local selected = {}
+    for _, entry in ipairs(sourceLists) do
+        if string.find(sources, "," .. entry[1] .. ",", 1, true) then
+            for _, p in ipairs(entry[2]) do
+                local sideOk = side == "ALL" or (side == "OWN" and p.friendly)
+                    or (side == "ENEMY" and not p.friendly)
+                if sideOk and (rangeNm <= 0 or lib.distToPolyline(p.x, p.z, s.front) <= rangeNm * 1852) then
+                    selected[#selected + 1] = p
+                end
+            end
+        end
+    end
+    order = string.upper(tostring(order or "FRONT"))
+    if order == "MAP" then return selected end
+    if order == "FRONT" then return lib.byFront(selected, s.front) end
+    if order == "FRONT_FAR" then
+        return lib.byScore(selected, function(p) return -lib.distToPolyline(p.x, p.z, s.front) end)
+    end
+    local ordered = {}
+    for i, p in ipairs(selected) do ordered[i] = p end
+    if order == "NAME" then
+        table.sort(ordered, function(a, b) return a.name < b.name end)
+    else
+        local axis = (order == "NORTH_SOUTH" or order == "SOUTH_NORTH") and "x" or "z"
+        local descending = order == "EAST_WEST" or order == "NORTH_SOUTH"
+        table.sort(ordered, function(a, b)
+            if a[axis] ~= b[axis] then
+                if descending then return a[axis] > b[axis] end
+                return a[axis] < b[axis]
+            end
+            return a.name < b.name
+        end)
+    end
+    return ordered
+end
+
 return {
     type = TYPE,
     base = { terrainPaths = { "MPD.NAV_PTS", "MPD.DEST", "MPD.GEO_LINES", "MPD.THREAT_PTS", "MPD.VIPVRP" } },
     options = {
         POINTS    = 11,     -- GEO line 1 (front): points 31..41, the rest of 31..55 stays free
-        DEST_PTS  = 19,     -- DEST PTS 81..99: airfields/FARPs of both sides (0 = keep the base)
+        DEST_PTS  = 19,     -- DEST PTS 81..99: point limit (0 = keep the base)
+        DEST_NM   = 0,      -- maximum distance from the front [NM], 0 = unlimited
+        DEST_SOURCES = "AIRFIELDS,FARPS",
+        DEST_SIDE = "ALL",  -- OWN | ENEMY | ALL
+        DEST_ORDER = "FRONT",
+        DEST_BALANCE = true, -- with ALL: split places between sides, unused places go to the other
         THREATS   = 15,     -- THREAT PTS (0 = keep the mission's threats)
         MIN_RANGE = 6000,   -- [m] skip short-range AD (AAA, MANPADS, SA-9/13, Avenger)
         DEDUP_M   = 5000,   -- one ring per threat type within this distance
     },
     -- config.lua values outside these are clamped (GEO 31..55, THREAT PTS 56..70, DEST 81..99)
-    limits = { POINTS = { 2, 11, int = true }, DEST_PTS = { 0, 19, int = true },
+    limits = { POINTS = { 2, 11, int = true }, DEST_PTS = { 0, 19, int = true }, DEST_NM = { 0 },
         THREATS = { 0, 15, int = true }, MIN_RANGE = { 0 }, DEDUP_M = { 0 } },
 
     build = function(s, lib, opt)
@@ -127,26 +176,30 @@ return {
             end
         end
 
-        -- DEST PTS 81..99: airfields and FARPs of both sides, split evenly red/blue,
-        -- nearest to the front first; a short side yields its slots to the other
+        -- DEST PTS 81..99: configurable sources/side/range/order; optional side balancing
+        -- preserves the original default distribution between enemy and friendly points.
         local dest = {}
         if opt.DEST_PTS > 0 then
-            local enemy, friendly = {}, {}
-            local function pool(o)
-                table.insert(o.friendly and friendly or enemy, o)
+            local selected = mapPoints(s, lib, opt.DEST_SOURCES, opt.DEST_SIDE, opt.DEST_NM, opt.DEST_ORDER)
+            local merged = selected
+            if opt.DEST_BALANCE and string.upper(tostring(opt.DEST_SIDE or "ALL")) == "ALL" then
+                local enemy, friendly = {}, {}
+                for _, p in ipairs(selected) do
+                    table.insert(p.friendly and friendly or enemy, p)
+                end
+                local nE = math.min(math.ceil(opt.DEST_PTS / 2), #enemy)
+                local nF = math.min(opt.DEST_PTS - nE, #friendly)
+                nE = math.min(nE + (opt.DEST_PTS - nE - nF), #enemy)
+                local take = {}
+                for i = 1, nE do take[enemy[i]] = true end
+                for i = 1, nF do take[friendly[i]] = true end
+                merged = {}
+                for _, p in ipairs(selected) do
+                    if take[p] then merged[#merged + 1] = p end
+                end
             end
-            for _, o in ipairs(s.airfields) do pool(o) end
-            for _, o in ipairs(s.farps) do pool(o) end
-            enemy = lib.byFront(enemy, s.front)
-            friendly = lib.byFront(friendly, s.front)
-            local nE = math.min(math.ceil(opt.DEST_PTS / 2), #enemy)
-            local nF = math.min(opt.DEST_PTS - nE, #friendly)
-            nE = math.min(nE + (opt.DEST_PTS - nE - nF), #enemy)
-            local merged = {}
-            for i = 1, nE do merged[#merged + 1] = enemy[i] end
-            for i = 1, nF do merged[#merged + 1] = friendly[i] end
-            merged = lib.byFront(merged, s.front)
-            for i, o in ipairs(merged) do
+            for i = 1, math.min(#merged, opt.DEST_PTS) do
+                local o = merged[i]
                 dest[i] = { number = i, id = "DEST" .. (80 + i), x = lib.round(o.x), y = lib.round(o.z),
                     alt = lib.elevation(s.env, o.x, o.z), text = "D" .. (80 + i),
                     note = (o.friendly and "BLU: " or "RED: ") .. o.name }
@@ -176,4 +229,30 @@ return {
         if colr then data.COLR = colr end
         return data, { points = #pts, dest = #dest, threats = #threats }
     end,
+
+    outputs = {
+        {
+            id      = "dcs-dtc-waypoints",
+            format  = "json",
+            dir     = "%USERPROFILE%\\Documents\\DCS-DTC\\Presets\\F16C",
+            file    = "SARMAT.json",
+            enabled = false,
+            build   = function(s, lib, opt, built)
+                -- The app's ordinary steerpoints reuse the selected DEST objects, not GEO/THREAT points.
+                local dest = opt.DEST_PTS > 0 and built["dcs-dtc"].MPD.DEST or nil
+                if not dest or #dest == 0 then return nil, { waypoints = 0 } end
+                local points = {}
+                for i, p in ipairs(dest) do
+                    local name = string.gsub(p.note or ("STPT " .. i), "^%u+:%s*", "")
+                    points[i] = lib.dcsDtcWaypoint(s.env, i, name, p.x, p.y)
+                end
+                return {
+                    Aircraft = "F16C",
+                    Upload = { Waypoints = true },
+                    Waypoints = { Waypoints = points },
+                    Version = 2,
+                }, { waypoints = #points }
+            end,
+        },
+    },
 }

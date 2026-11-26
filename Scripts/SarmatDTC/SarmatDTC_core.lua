@@ -6,7 +6,7 @@
 --     terrain   = "Syria",                            -- DCS terrain id written into the cartridges
 --     getHeight = function(x, z) return m end,        -- optional, terrain elevation [m]
 --     toLatLon  = function(x, z) return lat, lon end, -- optional
---     spawn     = { x, z, name },                     -- optional, own slot's start base
+--     spawn     = { x, z, name },                     -- optional, own start/last accepted landing base
 -- }
 -- Coordinates: SARMAT x/z are DCS map coordinates; DTC files store them as x (north) / y (east).
 --
@@ -204,6 +204,27 @@ function M.latLon(env, x, z)
         if ok and lat then return lat, lon end
     end
     return 0, 0
+end
+
+local function dcsDtcDm(value, pos, neg, degDigits)
+    local a = math.abs(value)
+    local deg = math.floor(a)
+    local minutes = math.floor((a - deg) * 60000 + 0.5) / 1000
+    if minutes >= 60 then deg, minutes = deg + 1, 0 end
+    return string.format("%s %0" .. degDigits .. "d\194\176%06.3f\226\128\153",
+        value >= 0 and pos or neg, deg, minutes)
+end
+
+-- DTC for DCS Version 2 waypoint: degrees/minutes with U+00B0/U+2019, elevation in feet.
+function M.dcsDtcWaypoint(env, sequence, name, x, z)
+    local lat, lon = M.latLon(env, x, z)
+    return {
+        Sequence = sequence,
+        Name = M.asciiUpper(name, 12),
+        Latitude = dcsDtcDm(lat, "N", "S", 2),
+        Longitude = dcsDtcDm(lon, "E", "W", 3),
+        Elevation = math.floor(M.elevation(env, x, z) * 3.28084 + 0.5),
+    }
 end
 
 -- Common cartridge header: { type, name, terrain }.
@@ -438,6 +459,46 @@ local function textOf(v)
     return (t == "string" or t == "number") and tostring(v) or ""
 end
 
+-- New public units.json contains no positions. With MAP_CODE, fetch.cmd downloads /api/side_data
+-- instead: its `units` list has the same group records, but enemies are visible only with `foe`.
+-- Returns units in the legacy { groups = ... } shape, an optional chat notice, or nil + reason.
+function M.normalizeUnits(raw, mySide)
+    if type(raw) ~= "table" then return nil, "cannot parse map data" end
+    mySide = sideKey(mySide)
+    if type(raw.units) == "table" or raw.ok ~= nil then
+        if raw.ok ~= true then
+            local why = raw.why
+            if why == "unknown code" then
+                return nil, "website code not recognised; take a new one in DCS (F10 > Settings > Website code)"
+            elseif why == "void" then
+                return nil, "website code expired; take a new one in DCS (F10 > Settings > Website code)"
+            elseif why == "side not set" then
+                return nil, "website code is not bound to a side; take a slot on the server"
+            elseif why == "locked" then
+                return nil, "website code side change is locked"
+            end
+            return nil, "website code request rejected"
+        end
+        if type(raw.units) ~= "table" then return nil, "protected map data has no units list" end
+        local boundSide = sideKey(raw.side)
+        if boundSide and mySide and boundSide ~= mySide then
+            return nil, "website code is for " .. boundSide .. ", current slot is " .. mySide
+        end
+        local ownSide = boundSide or mySide
+        local groups = {}
+        for _, g in ipairs(raw.units) do
+            if type(g) == "table" and ((ownSide and g.side == ownSide) or g.foe == true) then
+                groups[#groups + 1] = g
+            end
+        end
+        return { groups = groups }
+    end
+    if raw.byCode == true then
+        return { groups = {} }, "website code required for ground units (DCS: F10 > Settings > Website code)"
+    end
+    return raw
+end
+
 -- Record with numeric x/z, else nil (counted in s.skipped).
 local function placed(s, p)
     if type(p) == "table" and isNum(p.x) and isNum(p.z) then return p end
@@ -456,7 +517,8 @@ end
 --     airfields   = { {x, z, friendly, name}, ... } -- airfields (objectives kind "Airfield")
 --     strongholds = { {x, z, friendly, name}, ... } -- strongholds (objectives kind "Stronghold")
 --     strongpoints = { {x, z, friendly, name}, ... } -- alive strongpoints (status.strong kind "OP*")
---     spawn  = { x, z, name } | nil                 -- own start base (env.spawn), set by M.build
+--     depots = { {x, z, friendly, name}, ... }       -- alive depots (status.depots3)
+--     spawn  = { x, z, name } | nil                 -- own start/last accepted landing base (env.spawn)
 --     sectors = { {ring = {{x, z}, ...}, owner, name}, ... } -- map sectors (status.geo.sectors)
 --     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
 --     skipped = n                                   -- malformed map records left out
@@ -465,7 +527,7 @@ function M.situation(status, units, mySide)
     status, units = listOf(status), listOf(units)
     mySide = sideKey(mySide) or "blue"
     local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {},
-        airfields = {}, strongholds = {}, strongpoints = {}, sectors = {}, skipped = 0 }
+        airfields = {}, strongholds = {}, strongpoints = {}, depots = {}, sectors = {}, skipped = 0 }
 
     for _, p in ipairs(listOf(status.front)) do
         if placed(s, p) then s.front[#s.front + 1] = { x = p.x, z = p.z } end
@@ -526,6 +588,16 @@ function M.situation(status, units, mySide)
                 s.strongpoints[#s.strongpoints + 1] = { x = o.x, z = o.z,
                     friendly = side == mySide, name = textOf(o.name) }
             end
+        end
+    end
+
+    -- Live depot structures only: alive = 0 means destroyed, not an empty but usable depot.
+    for _, o in ipairs(listOf(status.depots3)) do
+        o = placed(s, o)
+        local side = o and sideKey(o.side)
+        if o and side and isNum(o.alive) and o.alive > 0 then
+            s.depots[#s.depots + 1] = { x = o.x, z = o.z,
+                friendly = side == mySide, name = textOf(o.label) }
         end
     end
 

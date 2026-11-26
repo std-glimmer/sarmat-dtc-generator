@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "side": "blue",
+  "units": [
+    {
+      "cat": "ground",
+      "side": "blue",
+      "type": "M-2 Bradley",
+      "types": ["M-2 Bradley"],
+      "count": 2,
+      "x": 103000,
+      "z": 83000,
+      "name": "BLUE-TEST"
+    },
+    {
+      "cat": "ground",
+      "side": "red",
+      "type": "SA-11 Buk LN 9A310M1",
+      "types": ["SA-11 Buk LN 9A310M1"],
+      "count": 1,
+      "x": 100000,
+      "z": 85000,
+      "name": "RED-VISIBLE",
+      "foe": true
+    },
+    {
+      "cat": "ground",
+      "side": "red",
+      "type": "T-72B",
+      "types": ["T-72B"],
+      "count": 3,
+      "x": 101000,
+      "z": 85000,
+      "name": "RED-HIDDEN",
+      "foe": false
+    }
+  ]
+}

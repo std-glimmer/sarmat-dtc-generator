@@ -114,6 +114,15 @@ select{
 input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
 .chk{display:inline-flex;align-items:center;gap:6px;margin-right:14px;white-space:nowrap}
 
+/* ---- F-15E route rules ---- */
+.route-rule{border:1px solid var(--line);border-radius:var(--radius);padding:0 16px 8px;margin:14px 0;background:var(--bg)}
+.route-rule h3{font-size:17px;color:var(--accent);padding:12px 0 8px}
+.route-rule .ctrl{flex-wrap:wrap;justify-content:flex-end}
+.route-rule .route-sources{max-width:560px}
+.route-rule .route-target{min-height:44px}
+.route-rules-note{margin-top:12px}
+@media (max-width:700px){.route-rule .ctrl{justify-content:flex-start}}
+
 /* ---- F-16 consumable rows / color grid ---- */
 .cons-host .row .ctrl input{width:86px}
 .colr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:4px 16px;margin-bottom:14px}
@@ -172,12 +181,26 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
 </header>
 
 <div class="wrap">
+  <section id="sec-general">
+    <h1>Общие настройки</h1>
+    <p class="sub">Применяются ко всем авиационным модулям и сохраняются в корне
+    <code class="mono">config.user.lua</code>, вне блока <code class="mono">OPTIONS</code>.</p>
+    <div class="row">
+      <label for="inLandingRefresh">Обновлять DTC после посадки
+        <small>Выкл. — старый режим: только при респавне или смене слота, без обработки посадки.
+        Вкл. — после посадки на базе своей коалиции DTC обновится по завершении загрузки карты.
+        По умолчанию выключено, чтобы исключить дополнительную нагрузку и возможные фризы.</small></label>
+      <div class="ctrl"><input type="checkbox" id="inLandingRefresh"></div>
+    </div>
+  </section>
+
   <div class="ac-page" data-ac="f15e">
   <nav class="sections" aria-label="Разделы F-15E">
     <a href="#sec-f15e">F-15E Strike Eagle</a>
     <a href="#sec-routes">Целевые точки</a>
     <a href="#sec-rings">Круги угроз</a>
     <a href="#sec-front">Линия фронта</a>
+    <a href="#sec-sectors">Границы секторов</a>
     <a href="#sec-displays">Дисплеи</a>
     <a href="#sec-misc">Misc</a>
   </nav>
@@ -191,24 +214,12 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
   </section>
 
   <section id="sec-routes">
-    <h2>Целевые точки с карты</h2>
-    <p class="sub">Маршрут B: вражеские опорные пункты и стронгхолды (с востока на запад).
-    Маршрут A: вражеские аэродромы и ФАРПы.</p>
-    <div class="row">
-      <label for="inTargets">Количество целевых точек (маршрут B)
-        <small>Опорники и стронгхолды, забиваемые с карты. 0 — без точек.</small></label>
-      <div class="ctrl"><input type="number" id="inTargets" min="0" max="99" step="1"><span class="unit">точек, макс 99</span></div>
-    </div>
-    <div class="row">
-      <label for="inRouteBNm">Предельная дистанция от ЛБС (маршрут B)
-        <small>Опорники и стронгхолды дальше этой дистанции не забиваются.</small></label>
-      <div class="ctrl"><input type="number" id="inRouteBNm" min="0" max="500" step="1"><span class="unit">морских миль</span></div>
-    </div>
-    <div class="row">
-      <label for="inRouteANm">Предельная дистанция от ЛБС (маршрут A)
-        <small>Вражеские аэродромы и ФАРПы дальше этой дистанции не забиваются.</small></label>
-      <div class="ctrl"><input type="number" id="inRouteANm" min="0" max="500" step="1"><span class="unit">морских миль</span></div>
-    </div>
+    <h2>Маршруты и точки с карты</h2>
+    <p class="sub">Для каждого маршрута выберите, какие объекты записывать, чью сторону брать,
+    в каком порядке располагать точки и считать ли их целями.</p>
+    <div id="routeRulesHost"></div>
+    <p class="sub route-rules-note">Дистанция 0 — без ограничения по удалению от ЛБС.
+    Лимит 0 — маршрут не заполняется. Одни и те же типы точек можно назначить нескольким маршрутам.</p>
   </section>
 
   <section id="sec-rings">
@@ -261,6 +272,42 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
     </div>
   </section>
 
+  <section id="sec-sectors">
+    <h2>Границы секторов</h2>
+    <p class="sub">Контуры выбранных секторов на странице SIT. По умолчанию слой выключен.
+    Modern F-15E показывает не более 32 фигур вместе с рисунками миссии; в картридже SARMAT
+    приоритет имеют линия фронта, затем границы секторов и только потом круги угроз.</p>
+    <div class="row">
+      <label for="inSectorSource">Какие сектора показывать
+        <small>«Через ЛБС» — только сектора, через которые проходит линия фронта.</small></label>
+      <div class="ctrl">
+        <select id="inSectorSource">
+          <option value="NONE" selected>Не показывать</option>
+          <option value="ACTIVE_SECTORS">Сектора через ЛБС</option>
+          <option value="OWN_SECTORS">Союзные сектора</option>
+          <option value="ENEMY_SECTORS">Вражеские сектора</option>
+          <option value="ALL_SECTORS">Все сектора</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <label for="inSectorColor">Цвет границ</label>
+      <div class="ctrl"><input type="color" id="inSectorColor" value="#FFFFFF"></div>
+    </div>
+    <div class="row">
+      <label for="inSectorStyle">Тип линии</label>
+      <div class="ctrl">
+        <select id="inSectorStyle">
+          <option value="solid">Сплошная</option>
+          <option value="dash">Пунктир</option>
+          <option value="dot" selected>Точки</option>
+          <option value="dotdash">Штрих-пунктир</option>
+        </select>
+        <span class="preview" id="sectorPreview"></span>
+      </div>
+    </div>
+  </section>
+
   <section id="sec-displays">
     <h2>Пресеты дисплеев</h2>
     <p class="sub">Страницы MPD/MPCD по слотам PROG (как в strike-eagle-dtc → Displays): до трёх страниц
@@ -305,6 +352,7 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
   <nav class="sections" aria-label="Разделы F/A-18">
     <a href="#sec-f18">F/A-18C Hornet</a>
     <a href="#sec-f18-sa">F18: SA</a>
+    <a href="#sec-f18-lines">F18: линии и коридоры</a>
     <a href="#sec-f18-gps">F18: GPS</a>
     <a href="#sec-f18-mez">F18: угрозы</a>
     <a href="#sec-f18-cmds">F18: CMDS</a>
@@ -313,9 +361,8 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
   <section id="sec-f18">
     <h1>F/A-18C Hornet</h1>
     <p class="sub">Эти настройки попадают в блок <code class="mono">OPTIONS["FA-18C_hornet"]</code> файла
-    <code class="mono">config.user.lua</code>. С карты забиваются: линия фронта как коридор 1
-    (SA → CORRIDORS), аэродромы и ФАРПы обеих сторон в секторах у ЛБС (GPS WAYPTS 1),
-    вражеские опорники и стронгхолды (GPS WAYPTS 2), кольца ЗРК (SA → MEZ THRTS).</p>
+    <code class="mono">config.user.lua</code>. Назначения FAOR, FLOT и CORRIDORS, источники GPS WAYPTS
+    и параметры угроз настраиваются ниже.</p>
   </section>
 
   <section id="sec-f18-sa">
@@ -323,7 +370,7 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
     <p class="sub">Что выбрано на странице SA после загрузки картриджа (выпадающие списки
     Default в редакторе DTC).</p>
     <div class="row">
-      <label for="inF18DefCorr">Default corridor<small>Коридор с линией фронта — коридор 1.</small></label>
+      <label for="inF18DefCorr">Default corridor<small>Коридор, выбранный на странице SA после загрузки.</small></label>
       <div class="ctrl"><select id="inF18DefCorr"></select></div>
     </div>
     <div class="row">
@@ -340,19 +387,21 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
     </div>
   </section>
 
+  <section id="sec-f18-lines">
+    <h2>FAOR / FLOT / CORRIDORS — назначение</h2>
+    <p class="sub">Выберите содержимое каждого номера. При повторном назначении одной категории
+    секторов используются следующие подходящие сектора в порядке данных карты. ЛБС можно
+    назначить нескольким номерам; для FLOT также доступны западная, центральная и восточная
+    трети фронта с общими точками на стыках. Незаполненные номера остаются пустыми.</p>
+    <div id="f18LineAssignmentsHost"></div>
+  </section>
+
   <section id="sec-f18-gps">
     <h2>GPS WAYPTS</h2>
-    <p class="sub">Таблица 1: аэродромы и ФАРПы обеих сторон в секторах, через которые проходит
-    ЛБС (только задействованные в миссии, ближние к ЛБС первые). Таблица 2: вражеские опорники
-    и стронгхолды. Подпись — 5 символов, полное имя — в примечании точки.</p>
-    <div class="row">
-      <label for="inF18Gps1Max">Точек в таблице 1<small>0 — таблица не заполняется.</small></label>
-      <div class="ctrl"><input type="number" id="inF18Gps1Max" min="0" max="100" step="1"><span class="unit">макс 100</span></div>
-    </div>
-    <div class="row">
-      <label for="inF18Gps2Max">Точек в таблице 2<small>0 — таблица не заполняется.</small></label>
-      <div class="ctrl"><input type="number" id="inF18Gps2Max" min="0" max="100" step="1"><span class="unit">макс 100</span></div>
-    </div>
+    <p class="sub">Для каждой таблицы настройте, какие объекты карты записывать и в каком порядке.
+    Подпись — 5 символов, полное имя — в примечании точки. Нулевой лимит отключает заполнение
+    соответствующей таблицы.</p>
+    <div id="f18GpsRulesHost"></div>
   </section>
 
   <section id="sec-f18-mez">
@@ -419,6 +468,7 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
   <div class="ac-page" data-ac="f16" hidden>
   <nav class="sections" aria-label="Разделы F-16">
     <a href="#sec-f16">F-16C Viper</a>
+    <a href="#sec-f16-dest">F16: DEST PTS</a>
     <a href="#sec-f16-cmds">F16: CMDS</a>
     <a href="#sec-f16-color">F16: COLOR</a>
   </nav>
@@ -427,9 +477,16 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
     <h1>F-16C Viper</h1>
     <p class="sub">Эти настройки попадают в блок <code class="mono">OPTIONS["F-16C_50"]</code> файла
     <code class="mono">config.user.lua</code>. С карты забиваются: линия фронта (GEO line 1,
-    точки 31–41), аэродромы и ФАРПы обеих сторон по удалению от ЛБС (DEST PTS 81–99),
-    кольца ЗРК (THREAT PTS). Ниже — пресеты CMDS и цвета символики: все пункты разделов
-    CMDS и COLOR внутриигрового редактора DTC.</p>
+    точки 31–41), выбранные объекты карты (DEST PTS 81–99), кольца ЗРК (THREAT PTS).
+    Ниже — пресеты CMDS и цвета символики: все пункты разделов CMDS и COLOR внутриигрового
+    редактора DTC.</p>
+  </section>
+
+  <section id="sec-f16-dest">
+    <h2>DEST PTS · точки 81–99</h2>
+    <p class="sub">Настройте состав и порядок точек DEST. Нулевой лимит оставляет секцию DEST
+    базового картриджа без изменений.</p>
+    <div id="f16DestRulesHost"></div>
   </section>
 
   <section id="sec-f16-cmds">
@@ -483,6 +540,158 @@ footer{color:var(--text-dim);font-size:13px;padding:8px 0 32px}
 
   </div><!-- /ac-page f16 -->
 
+  <div class="ac-page" data-ac="f14" hidden>
+  <nav class="sections" aria-label="Разделы F-14">
+    <a href="#sec-f14">F-14B(U)</a>
+    <a href="#sec-f14-lines">F14: линия фронта</a>
+    <a href="#sec-f14-app">F14: DTC for DCS</a>
+  </nav>
+
+  <section id="sec-f14">
+    <h1>F-14B(U)</h1>
+    <p class="sub">Настройки записываются в блок <code class="mono">OPTIONS["F-14BU"]</code>
+    файла <code class="mono">config.user.lua</code>. Основной картридж DCS получает линию фронта
+    в навигационном плане 1; планы 2–12 могут быть взяты из базового картриджа.</p>
+  </section>
+
+  <section id="sec-f14-lines">
+    <h2>Линия фронта · NAV 1</h2>
+    <p class="sub">ЛБС делится на сцепленные линии. В одном плане F-14 может быть не более
+    20 точек, поэтому фактическое число линий автоматически ограничивается этим лимитом.</p>
+    <div class="row">
+      <label for="inF14Lines">Количество линий<small>Максимум 4, но суммарно не более 20 точек.</small></label>
+      <div class="ctrl"><input type="number" id="inF14Lines" min="1" max="4" step="1"></div>
+    </div>
+    <div class="row">
+      <label for="inF14LinePts">Точек в каждой линии<small>От 2 до 9; по умолчанию 2 линии × 9 точек.</small></label>
+      <div class="ctrl"><input type="number" id="inF14LinePts" min="2" max="9" step="1"></div>
+    </div>
+  </section>
+
+  <section id="sec-f14-app">
+    <h2>DTC for DCS · только ППМ</h2>
+    <p class="sub">Отдельный пресет <code class="mono">SARMAT.json</code> для приложения DTC for DCS:
+    свои аэродромы и FARP/FOB записываются как ППМ 51–99. Другие разделы не заполняются.</p>
+    <div class="row">
+      <label for="inF14WpOn">Создавать пресет для DTC for DCS
+        <small>Файл появится в Документы\DCS-DTC\Presets\F14BU\SARMAT.json.</small></label>
+      <div class="ctrl"><input type="checkbox" id="inF14WpOn"></div>
+    </div>
+  </section>
+
+  </div><!-- /ac-page f14 -->
+
+  <div class="ac-page" data-ac="ah64" hidden>
+  <nav class="sections" aria-label="Разделы AH-64">
+    <a href="#sec-ah64">AH-64D Apache</a>
+    <a href="#sec-ah64-points">AH64: точки и линии</a>
+    <a href="#sec-ah64-filters">AH64: отбор объектов</a>
+    <a href="#sec-ah64-app">AH64: DTC for DCS</a>
+  </nav>
+
+  <section id="sec-ah64">
+    <h1>AH-64D Apache</h1>
+    <p class="sub">Настройки записываются в блок <code class="mono">OPTIONS["AH-64D_BLK_II"]</code>.
+    Основной картридж записывает аэродромы и FARP/FOB в WPT, группы войск, опорные пункты и Depot
+    в Control Measures, вражескую ПВО в Targets и линию фронта. Mission 1 содержит западную половину ЛБС,
+    Mission 2 — восточную; у каждой отдельные 50 WPT, 49 CTRLM и 25 TGT для более плотной разметки.</p>
+  </section>
+
+  <section id="sec-ah64-points">
+    <h2>Waypoints / Control Measures / Targets / Lines</h2>
+    <div class="row">
+      <label for="inAh64Wpthz">Аэродромы и FARP в WPT<small>Обе стороны, точки WP 1–50 с именем
+      в примечании. FREE: три буквы аэродрома без AL-/AN- (Al-Dumayr → DUM), FARP без номера площадки
+      (FARP 22-1 → F22). Не занимают Control Measures; 0 — не создавать эти WPT.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64Wpthz" min="0" max="50" step="1"><span class="unit">макс 50</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64Ctrlm">Control Measures<small>Группы войск, центры AREA, OP и живые Depot,
+      точки C51–C99. FREE: O10/D10 для объектов, тип и число юнитов для групп (T4, A3, C12, S2).
+      0 — не заполнять.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64Ctrlm" min="0" max="49" step="1"><span class="unit">макс 49</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64Tgt">Targets<small>Вражеская ПВО, T01–T50. До 25 — безопасный набор DTC;
+      свыше 25 остаётся меньше свободных точек для экипажа.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64Tgt" min="0" max="50" step="1"></div>
+    </div>
+    <div class="row">
+      <label for="inAh64Lines">Линий фронта<small>ЛБС делится на сцепленные линии FLOT. 0 — без линий.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64Lines" min="0" max="15" step="1"></div>
+    </div>
+    <div class="row">
+      <label for="inAh64LinePts">Точек в линии<small>От 2 до 4 вершин на каждую линию.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64LinePts" min="2" max="4" step="1"></div>
+    </div>
+  </section>
+
+  <section id="sec-ah64-filters">
+    <h2>Дистанции и объединение объектов</h2>
+    <p class="sub">По умолчанию в основной картридж попадают только точки в пределах 10 км от ЛБС,
+    а группы одной стороны ближе 1 км объединяются. Нулевые дистанции снимают ограничения.</p>
+    <div class="row">
+      <label for="inAh64AoDepth">Максимальная дистанция от ЛБС<small>WPT, CTRLM и Targets дальше
+      этого расстояния не записываются; 0 — вся карта.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64AoDepth" min="0" step="1000"><span class="unit">метров</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64Cluster">Радиус объединения групп<small>Число юнитов суммируется, тип метки
+      определяется по общему составу; 0 — без объединения.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64Cluster" min="0" step="100"><span class="unit">метров</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64AreaMinGroups">AREA — минимум групп<small>Скопление одной стороны отмечается
+      четырёхугольной AREA; внутри ставится одна CTRLM с типом и числом исходных групп (T5 или C5).
+      0 — отключить AREA.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64AreaMinGroups" min="0" max="49" step="1"><span class="unit">групп</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64AreaDist">AREA — дистанция между группами<small>Группы соединяются в скопление,
+      если расстояние между ними не превышает это значение; 0 — отключить AREA.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64AreaDist" min="0" step="100"><span class="unit">метров</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64OwnFront">Свои войска у фронта<small>Свои группы дальше этого расстояния от ЛБС
+      не показываются; 0 — показывать все.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64OwnFront" min="0" step="1000"><span class="unit">метров</span></div>
+    </div>
+    <div class="row">
+      <label for="inAh64OwnAd">Показывать свою ПВО<small>Добавляет союзные группы ПВО в Control Measures.</small></label>
+      <div class="ctrl"><input type="checkbox" id="inAh64OwnAd"></div>
+    </div>
+    <div class="row">
+      <label for="inAh64SpawnWeight">Вес расстояния до базы<small>Приоритет относительно дистанции до ЛБС;
+      0 — база спавна не влияет на порядок.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64SpawnWeight" min="0" step="0.1"></div>
+    </div>
+    <div class="row">
+      <label for="inAh64EnemyFactor">Приоритет вражеских объектов<small>Множитель веса врага:
+      меньше 1 — враги раньше, 1 — без предпочтения.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64EnemyFactor" min="0" step="0.1"></div>
+    </div>
+    <div class="row">
+      <label for="inAh64RingCap">Учёт радиуса угрозы<small>Верхний предел радиуса ПВО при расчёте
+      приоритета Targets.</small></label>
+      <div class="ctrl"><input type="number" id="inAh64RingCap" min="0" step="500"><span class="unit">метров</span></div>
+    </div>
+  </section>
+
+  <section id="sec-ah64-app">
+    <h2>DTC for DCS · только ППМ</h2>
+    <p class="sub">Отдельный пресет <code class="mono">SARMAT.json</code>: выбранные аэродромы,
+    FARP/FOB, опорные пункты, стронгхолды и группы юнитов записываются как обычные WP 1–50.
+    Для групп нужен действующий Website code; сервер карты выдаёт только разрешённых противников.</p>
+    <div class="row">
+      <label for="inAh64WpOn">Создавать пресет для DTC for DCS
+        <small>Файл появится в Документы\DCS-DTC\Presets\AH64D\SARMAT.json.</small></label>
+      <div class="ctrl"><input type="checkbox" id="inAh64WpOn"></div>
+    </div>
+    <div id="ah64WpRulesHost"></div>
+  </section>
+
+  </div><!-- /ac-page ah64 -->
+
   <footer>
     Сохранённый файл положите в <span class="mono">Saved Games\DCS.openbeta\Scripts\SarmatDTC\config.user.lua</span>
     (если открывали его кнопкой «Открыть», «Сохранить» запишет прямо в него).
@@ -521,12 +730,55 @@ const DEFAULTS = {
   TARGETS: 99, ROUTE_B_NM: 20, ROUTE_A_NM: 50, THREATS: 0,
   RING_COLOR: "#ffff00", RING_STYLE: "dash",
   FRONT_COLOR: "#ff0000", FRONT_STYLE: "solid",
+  SECTOR_SOURCE: "NONE", SECTOR_COLOR: "#ffffff", SECTOR_STYLE: "dot",
 };
+const ROUTE_IDS = ["A", "B", "C"];
+const ROUTE_TYPES = [
+  ["AIRFIELDS", "Аэродромы"], ["FARPS", "ФАРПы / FOB"],
+  ["STRONGPOINTS", "Опорные пункты OP"], ["STRONGHOLDS", "Стронгхолды"],
+];
+const ROUTE_SIDES = [["OWN", "Союзные"], ["ENEMY", "Вражеские"], ["ALL", "Обе стороны"]];
+const ROUTE_ORDERS = [
+  ["FRONT", "Сначала ближние к ЛБС"], ["FRONT_FAR", "Сначала дальние от ЛБС"],
+  ["EAST_WEST", "С востока на запад"], ["WEST_EAST", "С запада на восток"],
+  ["NORTH_SOUTH", "С севера на юг"], ["SOUTH_NORTH", "С юга на север"],
+  ["NAME", "По названию"], ["MAP", "В порядке данных карты"],
+];
+function defaultRoutes() {
+  return {
+    A: { sources: ["AIRFIELDS", "FARPS"], side: "ENEMY", range: DEFAULTS.ROUTE_A_NM, limit: 99, order: "FRONT", target: true },
+    B: { sources: ["STRONGPOINTS", "STRONGHOLDS"], side: "ENEMY", range: DEFAULTS.ROUTE_B_NM, limit: DEFAULTS.TARGETS, order: "EAST_WEST", target: true },
+    C: { sources: ["AIRFIELDS"], side: "OWN", range: 0, limit: 99, order: "FRONT", target: false },
+  };
+}
+function syncLegacyRouteState(st) {
+  st.ROUTE_A_NM = st.routes.A.range;
+  st.ROUTE_B_NM = st.routes.B.range;
+  st.TARGETS = st.routes.B.limit;
+}
 
 // ---- F/A-18C ----
 const F18_PROGRAMS = ["MAN_1", "MAN_2", "MAN_3", "MAN_4", "MAN_5", "MAN_6", "AUTO_1", "AUTO_2", "AUTO_3", "BYP"];
 const F18_PROGRAM_LABELS = { MAN_1: "MAN 1", MAN_2: "MAN 2", MAN_3: "MAN 3", MAN_4: "MAN 4",
   MAN_5: "MAN 5", MAN_6: "MAN 6", AUTO_1: "AUTO 1", AUTO_2: "AUTO 2", AUTO_3: "AUTO 3", BYP: "BYPASS" };
+const F18_LINE_SOURCES = [
+  ["NONE", "Не заполнять"], ["FRONT", "Линия боевого соприкосновения"],
+  ["ACTIVE_SECTORS", "Границы активных секторов"], ["OWN_SECTORS", "Границы союзных секторов"],
+  ["ENEMY_SECTORS", "Границы вражеских секторов"], ["ALL_SECTORS", "Границы всех секторов"],
+];
+const F18_FLOT_FRONT_SOURCES = [
+  ["FRONT_WEST", "Западная треть линии фронта"],
+  ["FRONT_CENTER", "Центральная треть линии фронта"],
+  ["FRONT_EAST", "Восточная треть линии фронта"],
+];
+const F18_LINE_GROUPS = [
+  { prefix: "FAOR", count: 3, title: "FAOR · линии 1–3" },
+  { prefix: "FLOT", count: 3, title: "FLOT · линии 1–3" },
+  { prefix: "CORRIDOR", count: 7, title: "CORRIDORS · коридоры 1–7" },
+];
+function f18LineSources(group) {
+  return group.prefix === "FLOT" ? F18_LINE_SOURCES.concat(F18_FLOT_FRONT_SOURCES) : F18_LINE_SOURCES;
+}
 // DCS defaults (CoreMods/aircraft/FA-18C/DTC/ALR67/CMDS_defs.lua)
 const F18_CMDS_DEFAULTS = {
   delay: 0,
@@ -550,7 +802,15 @@ const F18_DEFAULTS = {
 function defaultF18() {
   const cmds = { delay: F18_CMDS_DEFAULTS.delay };
   for (const p of F18_PROGRAMS) cmds[p] = { ...F18_CMDS_DEFAULTS[p] };
-  return { ...F18_DEFAULTS, cmds };
+  const lines = {};
+  for (const group of F18_LINE_GROUPS) {
+    lines[group.prefix] = Array.from({ length: group.count },
+      (_, i) => group.prefix === "CORRIDOR" && i === 0 ? "FRONT" : "NONE");
+  }
+  return { ...F18_DEFAULTS, cmds, lines,
+    gps1: { sources: ["AIRFIELDS", "FARPS"], side: "ALL", range: 0, limit: 100, order: "FRONT", activeOnly: true },
+    gps2: { sources: ["STRONGPOINTS", "STRONGHOLDS"], side: "ENEMY", range: 0, limit: 100, order: "FRONT" },
+  };
 }
 
 // ---- F-16C ----
@@ -641,7 +901,40 @@ for (const [, entries] of F16_COLR_GROUPS) {
 function defaultF16() {
   const cmds = { delay: F16_CMDS_DEFAULTS.delay, bingo: { ...F16_CMDS_DEFAULTS.bingo } };
   for (const p of F16_PROGRAMS) cmds[p] = { ...F16_CMDS_DEFAULTS[p] };
-  return { cmdsOn: false, colrOn: false, cmds, colr: { ...F16_COLR_DEFAULTS } };
+  return { cmdsOn: false, colrOn: false, cmds, colr: { ...F16_COLR_DEFAULTS },
+    dest: { sources: ["AIRFIELDS", "FARPS"], side: "ALL", range: 0, limit: 19, order: "FRONT", balance: true },
+  };
+}
+
+// ---- F-14B(U) and AH-64D ----
+const F14_DEFAULTS = { LINES: 2, LINE_PTS: 9, wpOn: false };
+function defaultF14() { return { ...F14_DEFAULTS }; }
+
+const AH64_WP_TYPES = ROUTE_TYPES.concat([["GROUPS", "Группы юнитов"]]);
+const AH64_FIELDS = [
+  ["WPTHZ_PTS", "inAh64Wpthz", 0, 50, true],
+  ["CTRLM", "inAh64Ctrlm", 0, 49, true],
+  ["TGT", "inAh64Tgt", 0, 50, true],
+  ["LINES", "inAh64Lines", 0, 15, true],
+  ["LINE_PTS", "inAh64LinePts", 2, 4, true],
+  ["AO_DEPTH_M", "inAh64AoDepth", 0, null, true],
+  ["CLUSTER_M", "inAh64Cluster", 0, null, true],
+  ["AREA_MIN_GROUPS", "inAh64AreaMinGroups", 0, 49, true],
+  ["AREA_DIST_M", "inAh64AreaDist", 0, null, true],
+  ["OWN_FRONT_M", "inAh64OwnFront", 0, null, true],
+  ["SPAWN_WEIGHT", "inAh64SpawnWeight", 0, null, false],
+  ["ENEMY_FACTOR", "inAh64EnemyFactor", 0, null, false],
+  ["RING_CAP_M", "inAh64RingCap", 0, null, true],
+];
+const AH64_DEFAULTS = {
+  WPTHZ_PTS: 50, CTRLM: 49, TGT: 25, LINES: 15, LINE_PTS: 4,
+  AO_DEPTH_M: 10000, CLUSTER_M: 1000, AREA_MIN_GROUPS: 5, AREA_DIST_M: 3000,
+  OWN_FRONT_M: 10000, SPAWN_WEIGHT: 0.5, ENEMY_FACTOR: 0.7, RING_CAP_M: 15000,
+};
+function defaultAh64() {
+  return { ...AH64_DEFAULTS, OWN_AD: false, wpOn: false,
+    wp: { sources: ["AIRFIELDS", "FARPS", "STRONGPOINTS", "STRONGHOLDS", "GROUPS"],
+      side: "ALL", range: 0, limit: 50, order: "FRONT" } };
 }
 
 // ---------- state ----------
@@ -654,10 +947,14 @@ function defaultState() {
   }
   return {
     ...DEFAULTS,
+    landingRefresh: false,
+    routes: defaultRoutes(),
     displays,
     misc: { Bingo: null, CARAALOW: null, TACANChannel: null, TACANBand: "X", TACANMode: "TR", TACANOn: true, ILSFrequency: null, TGPCode: null },
     f18: defaultF18(),
     f16: defaultF16(),
+    f14: defaultF14(),
+    ah64: defaultAh64(),
   };
 }
 
@@ -751,10 +1048,40 @@ function parseF15EBlock(block, st) {
     const v = luaScalar(block, k);
     if (v !== null && isFinite(Number(v))) st[k] = Number(v);
   }
-  for (const k of ["RING_COLOR", "RING_STYLE", "FRONT_COLOR", "FRONT_STYLE"]) {
+  for (const k of ["RING_COLOR", "RING_STYLE", "FRONT_COLOR", "FRONT_STYLE", "SECTOR_COLOR", "SECTOR_STYLE"]) {
     const v = luaScalar(block, k);
     if (v !== null) st[k] = String(v).toLowerCase();
   }
+  const sectorSource = luaScalar(block, "SECTOR_SOURCE");
+  if (sectorSource !== null) {
+    const value = String(sectorSource).toUpperCase();
+    if (["NONE", "ACTIVE_SECTORS", "OWN_SECTORS", "ENEMY_SECTORS", "ALL_SECTORS"].includes(value)) {
+      st.SECTOR_SOURCE = value;
+    }
+  }
+  for (const id of ROUTE_IDS) {
+    const r = st.routes[id];
+    const range = luaScalar(block, `ROUTE_${id}_NM`);
+    if (range !== null && isFinite(Number(range))) r.range = Math.max(0, Number(range));
+    const limit = luaScalar(block, id === "B" ? "TARGETS" : `ROUTE_${id}_LIMIT`);
+    if (limit !== null && isFinite(Number(limit))) r.limit = Math.max(0, Math.min(99, Math.round(Number(limit))));
+    const sources = luaScalar(block, `ROUTE_${id}_SOURCES`);
+    if (sources !== null) {
+      r.sources = String(sources).split(",").map(s => s.trim().toUpperCase())
+        .filter(s => ROUTE_TYPES.some(([value]) => value === s));
+    }
+    const side = luaScalar(block, `ROUTE_${id}_SIDE`);
+    if (side !== null && ROUTE_SIDES.some(([value]) => value === String(side).toUpperCase())) {
+      r.side = String(side).toUpperCase();
+    }
+    const order = luaScalar(block, `ROUTE_${id}_ORDER`);
+    if (order !== null && ROUTE_ORDERS.some(([value]) => value === String(order).toUpperCase())) {
+      r.order = String(order).toUpperCase();
+    }
+    const target = luaScalar(block, `ROUTE_${id}_TARGET`);
+    if (target !== null) r.target = target === "true";
+  }
+  syncLegacyRouteState(st);
   const dsp = luaTableText(block, "DISPLAYS");
   if (dsp !== null) {
     for (const [seat, name] of DISPLAYS) {
@@ -787,6 +1114,32 @@ function parseF15EBlock(block, st) {
   return st;
 }
 
+function parsePointRule(block, rule, prefix, limitKey, max, boolField, boolKey, types) {
+  const limit = luaScalar(block, limitKey);
+  if (limit !== null && isFinite(Number(limit))) {
+    rule.limit = Math.max(0, Math.min(max, Math.round(Number(limit))));
+  }
+  const range = luaScalar(block, `${prefix}_NM`);
+  if (range !== null && isFinite(Number(range))) rule.range = Math.max(0, Number(range));
+  const sources = luaScalar(block, `${prefix}_SOURCES`);
+  if (sources !== null) {
+    rule.sources = String(sources).split(",").map(s => s.trim().toUpperCase())
+      .filter(s => (types || ROUTE_TYPES).some(([value]) => value === s));
+  }
+  const side = luaScalar(block, `${prefix}_SIDE`);
+  if (side !== null && ROUTE_SIDES.some(([value]) => value === String(side).toUpperCase())) {
+    rule.side = String(side).toUpperCase();
+  }
+  const order = luaScalar(block, `${prefix}_ORDER`);
+  if (order !== null && ROUTE_ORDERS.some(([value]) => value === String(order).toUpperCase())) {
+    rule.order = String(order).toUpperCase();
+  }
+  if (boolField) {
+    const value = luaScalar(block, boolKey);
+    if (value !== null) rule[boolField] = value === "true";
+  }
+}
+
 function parseF18Block(block, st) {
   const f = st.f18;
   for (const k of ["GPS1_MAX", "GPS2_MAX", "THREATS", "MIN_RANGE", "THREAT_LEVEL",
@@ -794,6 +1147,16 @@ function parseF18Block(block, st) {
     const v = luaScalar(block, k);
     if (v !== null && isFinite(Number(v))) f[k] = Number(v);
   }
+  for (const group of F18_LINE_GROUPS) {
+    for (let slot = 1; slot <= group.count; slot++) {
+      const value = luaScalar(block, `${group.prefix}_${slot}`);
+      if (value !== null && f18LineSources(group).some(([source]) => source === String(value).toUpperCase())) {
+        f.lines[group.prefix][slot - 1] = String(value).toUpperCase();
+      }
+    }
+  }
+  parsePointRule(block, f.gps1, "GPS1", "GPS1_MAX", 100, "activeOnly", "GPS1_ACTIVE_ONLY");
+  parsePointRule(block, f.gps2, "GPS2", "GPS2_MAX", 100);
   const cmds = luaTableText(block, "CMDS");
   if (cmds !== null) {
     f.cmdsOn = true;
@@ -813,6 +1176,7 @@ function parseF18Block(block, st) {
 
 function parseF16Block(block, st) {
   const f = st.f16;
+  parsePointRule(block, f.dest, "DEST", "DEST_PTS", 19, "balance", "DEST_BALANCE");
   const cmds = luaTableText(block, "CMDS");
   if (cmds !== null) {
     f.cmdsOn = true;
@@ -853,13 +1217,49 @@ function parseF16Block(block, st) {
   return st;
 }
 
+function parseF14Block(block, st) {
+  const f = st.f14;
+  for (const [key, min, max] of [["LINES", 1, 4], ["LINE_PTS", 2, 9]]) {
+    const value = luaScalar(block, key);
+    if (value !== null && isFinite(Number(value))) {
+      f[key] = Math.max(min, Math.min(max, Math.round(Number(value))));
+    }
+  }
+  const output = findBlockText(block, "dcs-dtc-waypoints");
+  if (output !== null) f.wpOn = luaScalar(output, "enabled") === "true";
+  return st;
+}
+
+function parseAh64Block(block, st) {
+  const f = st.ah64;
+  for (const [key, , min, max, integer] of AH64_FIELDS) {
+    const value = luaScalar(block, key);
+    if (value === null || !isFinite(Number(value))) continue;
+    let parsed = Number(value);
+    if (integer) parsed = Math.round(parsed);
+    f[key] = Math.max(min, max === null ? parsed : Math.min(max, parsed));
+  }
+  const ownAd = luaScalar(block, "OWN_AD");
+  if (ownAd !== null) f.OWN_AD = ownAd === "true";
+  parsePointRule(block, f.wp, "WP", "WP_PTS", 50, null, null, AH64_WP_TYPES);
+  const output = findBlockText(block, "dcs-dtc-waypoints");
+  if (output !== null) f.wpOn = luaScalar(output, "enabled") === "true";
+  return st;
+}
+
 // ---------- Lua generation ----------
 
 function genBlock(st) {
   const L = [];
   L.push('        ["F-15ESE"] = {');
-  L.push(`            ROUTE_A_NM = ${st.ROUTE_A_NM}, ROUTE_B_NM = ${st.ROUTE_B_NM}, TARGETS = ${st.TARGETS}, THREATS = ${st.THREATS},`);
+  L.push(`            ROUTE_A_NM = ${st.routes.A.range}, ROUTE_B_NM = ${st.routes.B.range}, ROUTE_C_NM = ${st.routes.C.range}, TARGETS = ${st.routes.B.limit}, THREATS = ${st.THREATS},`);
+  L.push(`            ROUTE_A_LIMIT = ${st.routes.A.limit}, ROUTE_C_LIMIT = ${st.routes.C.limit},`);
+  for (const id of ROUTE_IDS) {
+    const r = st.routes[id];
+    L.push(`            ROUTE_${id}_SOURCES = "${r.sources.join(",")}", ROUTE_${id}_SIDE = "${r.side}", ROUTE_${id}_ORDER = "${r.order}", ROUTE_${id}_TARGET = ${r.target},`);
+  }
   L.push(`            FRONT_COLOR = "${st.FRONT_COLOR.toUpperCase()}", FRONT_STYLE = "${st.FRONT_STYLE}",`);
+  L.push(`            SECTOR_SOURCE = "${st.SECTOR_SOURCE}", SECTOR_COLOR = "${st.SECTOR_COLOR.toUpperCase()}", SECTOR_STYLE = "${st.SECTOR_STYLE}",`);
   L.push(`            RING_COLOR = "${st.RING_COLOR.toUpperCase()}", RING_STYLE = "${st.RING_STYLE}",`);
   const seats = [];
   for (const seat of ["Pilot", "WSO"]) {
@@ -892,7 +1292,13 @@ function genF18Block(st) {
   const f = st.f18;
   const L = [];
   L.push('        ["FA-18C_hornet"] = {');
-  L.push(`            GPS1_MAX = ${f.GPS1_MAX}, GPS2_MAX = ${f.GPS2_MAX},`);
+  for (const group of F18_LINE_GROUPS) {
+    const assignments = f.lines[group.prefix].map((source, i) => `${group.prefix}_${i + 1} = "${source}"`);
+    L.push(`            ${assignments.join(", ")},`);
+  }
+  L.push(`            GPS1_MAX = ${f.gps1.limit}, GPS2_MAX = ${f.gps2.limit},`);
+  L.push(`            GPS1_NM = ${f.gps1.range}, GPS1_SOURCES = "${f.gps1.sources.join(",")}", GPS1_SIDE = "${f.gps1.side}", GPS1_ORDER = "${f.gps1.order}", GPS1_ACTIVE_ONLY = ${f.gps1.activeOnly},`);
+  L.push(`            GPS2_NM = ${f.gps2.range}, GPS2_SOURCES = "${f.gps2.sources.join(",")}", GPS2_SIDE = "${f.gps2.side}", GPS2_ORDER = "${f.gps2.order}",`);
   L.push(`            THREATS = ${f.THREATS}, MIN_RANGE = ${f.MIN_RANGE}, THREAT_LEVEL = ${f.THREAT_LEVEL},`);
   L.push(`            DEFAULT_CORRIDOR = ${f.DEFAULT_CORRIDOR}, DEFAULT_FAOR = ${f.DEFAULT_FAOR}, DEFAULT_FLOT = ${f.DEFAULT_FLOT}, DEFAULT_MEZ_LVL = ${f.DEFAULT_MEZ_LVL},`);
   if (f.cmdsOn) {
@@ -911,6 +1317,8 @@ function genF16Block(st) {
   const f = st.f16;
   const L = [];
   L.push('        ["F-16C_50"] = {');
+  L.push(`            DEST_PTS = ${f.dest.limit}, DEST_NM = ${f.dest.range}, DEST_SOURCES = "${f.dest.sources.join(",")}",`);
+  L.push(`            DEST_SIDE = "${f.dest.side}", DEST_ORDER = "${f.dest.order}", DEST_BALANCE = ${f.dest.balance},`);
   if (f.cmdsOn) {
     const b = f.cmds.bingo;
     const rows = [`                delay = ${f.cmds.delay},`,
@@ -937,14 +1345,60 @@ function genF16Block(st) {
   return L.join("\n");
 }
 
+function genF14Block(st) {
+  const f = st.f14;
+  return [
+    '        ["F-14BU"] = {',
+    `            LINES = ${f.LINES}, LINE_PTS = ${f.LINE_PTS},`,
+    `            outputs = { ["dcs-dtc-waypoints"] = { enabled = ${f.wpOn} } },`,
+    "        },",
+  ].join("\n");
+}
+
+function genAh64Block(st) {
+  const f = st.ah64;
+  const L = ['        ["AH-64D_BLK_II"] = {'];
+  const values = AH64_FIELDS.map(([key]) => `${key} = ${f[key]}`);
+  values.push(`OWN_AD = ${f.OWN_AD}`);
+  L.push(`            ${values.join(", ")},`);
+  L.push(`            WP_PTS = ${f.wp.limit}, WP_NM = ${f.wp.range}, WP_SOURCES = "${f.wp.sources.join(",")}",`);
+  L.push(`            WP_SIDE = "${f.wp.side}", WP_ORDER = "${f.wp.order}",`);
+  L.push(`            outputs = { ["dcs-dtc-waypoints"] = { enabled = ${f.wpOn} } },`);
+  L.push("        },");
+  return L.join("\n");
+}
+
 // All blocks the configurator owns, keyed by aircraft type.
 function genBlocks(st) {
-  return { "F-15ESE": genBlock(st), "FA-18C_hornet": genF18Block(st), "F-16C_50": genF16Block(st) };
+  return {
+    "F-15ESE": genBlock(st),
+    "FA-18C_hornet": genF18Block(st),
+    "F-16C_50": genF16Block(st),
+    "F-14BU": genF14Block(st),
+    "AH-64D_BLK_II": genAh64Block(st),
+  };
+}
+
+// Replace / insert the top-level landing switch without touching comments or unrelated settings.
+function spliceLandingRefresh(text, enabled) {
+  const masked = maskComments(text);
+  const re = /^[ \t]*LANDING_REFRESH\s*=\s*(?:true|false)\s*,?/m;
+  const m = re.exec(masked);
+  if (m) {
+    const indent = /^[ \t]*/.exec(m[0])[0];
+    return text.slice(0, m.index) + `${indent}LANDING_REFRESH = ${enabled},` + text.slice(m.index + m[0].length);
+  }
+  const retM = /return\s*\{/.exec(masked);
+  if (retM) {
+    const at = retM.index + retM[0].length;
+    return text.slice(0, at) + `\n    LANDING_REFRESH = ${enabled},` + text.slice(at);
+  }
+  return text;
 }
 
 // Replace / insert the given blocks inside config.user.lua text; fresh file when none.
 // blocks = { "<type>": blockText, ... }.
-function spliceConfig(original, blocks) {
+function spliceConfig(original, blocks, landingRefresh = false) {
   if (typeof blocks === "string") blocks = { "F-15ESE": blocks };   // legacy single-block call
   let text = original;
   if (text) {
@@ -973,12 +1427,12 @@ function spliceConfig(original, blocks) {
         text = text.slice(0, at) + "\n    OPTIONS = {\n" + blockText + "\n    }," + text.slice(at);
       }
     }
-    return text;
+    return spliceLandingRefresh(text, landingRefresh);
   }
   const all = Object.values(blocks).join("\n");
   return "-- SarmatDTC user settings (created by the configurator).\n"
     + "-- Same shape as config.lua: only what you change. See config.lua for the full list.\n"
-    + "return {\n    OPTIONS = {\n" + all + "\n    },\n}\n";
+    + `return {\n    LANDING_REFRESH = ${landingRefresh},\n    OPTIONS = {\n` + all + "\n    },\n}\n";
 }
 
 // ---------- UI ----------
@@ -1005,6 +1459,171 @@ function previewSvg(color, style, circle) {
 function renderPreviews() {
   $("ringPreview").innerHTML = previewSvg(state.RING_COLOR, state.RING_STYLE, true);
   $("frontPreview").innerHTML = previewSvg(state.FRONT_COLOR, state.FRONT_STYLE, false);
+  $("sectorPreview").innerHTML = previewSvg(state.SECTOR_COLOR, state.SECTOR_STYLE, false);
+}
+
+function buildRouteRules() {
+  const host = $("routeRulesHost");
+  const options = (items) => items.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+  host.innerHTML = ROUTE_IDS.map(id => `
+    <div class="route-rule">
+      <h3>Маршрут ${id}</h3>
+      <div class="row">
+        <label>Типы точек<small>Отметьте любые категории; при снятых отметках маршрут будет пустым.</small></label>
+        <div class="ctrl route-sources">${ROUTE_TYPES.map(([value, label]) =>
+          `<label class="chk"><input type="checkbox" data-route="${id}" data-source="${value}">${label}</label>`).join("")}</div>
+      </div>
+      <div class="row">
+        <label>Сторона<small>Фильтр по принадлежности объекта.</small></label>
+        <div class="ctrl"><select data-route="${id}" data-field="side" aria-label="Маршрут ${id}: сторона">${options(ROUTE_SIDES)}</select></div>
+      </div>
+      <div class="row">
+        <label>Порядок записи<small>Определяет последовательность точек в маршруте.</small></label>
+        <div class="ctrl"><select data-route="${id}" data-field="order" aria-label="Маршрут ${id}: порядок">${options(ROUTE_ORDERS)}</select></div>
+      </div>
+      <div class="row">
+        <label>Дистанция от ЛБС<small>0 — вся карта, без ограничения по дистанции.</small></label>
+        <div class="ctrl"><input type="number" min="0" max="500" step="1" data-route="${id}" data-field="range" aria-label="Маршрут ${id}: дистанция от ЛБС"><span class="unit">морских миль</span></div>
+      </div>
+      <div class="row">
+        <label>Лимит точек<small>0 — не заполнять маршрут; максимум 99.</small></label>
+        <div class="ctrl"><input type="number" min="0" max="99" step="1" data-route="${id}" data-field="limit" aria-label="Маршрут ${id}: лимит точек"><span class="unit">точек</span></div>
+      </div>
+      <div class="row">
+        <label>Тип записи<small>Цели отображаются как target points; остальные — как обычные steerpoints.</small></label>
+        <div class="ctrl"><label class="chk route-target"><input type="checkbox" data-route="${id}" data-field="target">Записывать как целевые точки</label></div>
+      </div>
+    </div>`).join("");
+  host.addEventListener("change", (ev) => {
+    if (!ev.target.dataset.route) return;
+    routeRulesFromUi();
+    markDirty();
+  });
+}
+
+function routeRulesToUi() {
+  for (const id of ROUTE_IDS) {
+    const r = state.routes[id];
+    for (const input of document.querySelectorAll(`input[data-route="${id}"][data-source]`)) {
+      input.checked = r.sources.includes(input.dataset.source);
+    }
+    for (const field of ["side", "order", "range", "limit"]) {
+      document.querySelector(`[data-route="${id}"][data-field="${field}"]`).value = r[field];
+    }
+    document.querySelector(`input[data-route="${id}"][data-field="target"]`).checked = r.target;
+  }
+}
+
+function routeRulesFromUi() {
+  for (const id of ROUTE_IDS) {
+    const r = state.routes[id];
+    r.sources = Array.from(document.querySelectorAll(`input[data-route="${id}"][data-source]:checked`))
+      .map(input => input.dataset.source);
+    r.side = document.querySelector(`[data-route="${id}"][data-field="side"]`).value;
+    r.order = document.querySelector(`[data-route="${id}"][data-field="order"]`).value;
+    const range = Number(document.querySelector(`[data-route="${id}"][data-field="range"]`).value);
+    const limit = Number(document.querySelector(`[data-route="${id}"][data-field="limit"]`).value);
+    r.range = isFinite(range) ? Math.max(0, range) : r.range;
+    r.limit = isFinite(limit) ? Math.max(0, Math.min(99, Math.round(limit))) : r.limit;
+    r.target = document.querySelector(`input[data-route="${id}"][data-field="target"]`).checked;
+  }
+  syncLegacyRouteState(state);
+}
+
+const POINT_RULES = [
+  { id: "f18Gps1", host: "f18GpsRulesHost", title: "GPS WAYPTS 1 · точки 1–100", max: 100,
+    get: () => state.f18.gps1, zero: "0 — таблица не заполняется.",
+    special: { field: "activeOnly", title: "Активные сектора",
+      note: "Ограничивает выбор секторами, через которые проходит ЛБС.",
+      label: "Только сектора у линии боевого соприкосновения" } },
+  { id: "f18Gps2", host: "f18GpsRulesHost", title: "GPS WAYPTS 2 · точки 101–200", max: 100,
+    get: () => state.f18.gps2, zero: "0 — таблица не заполняется." },
+  { id: "f16Dest", host: "f16DestRulesHost", title: "DEST PTS · точки 81–99", max: 19,
+    get: () => state.f16.dest, zero: "0 — оставить базовый DTC без изменений.",
+    special: { field: "balance", title: "Баланс сторон",
+      note: "Действует при выборе «Обе стороны»; незанятые места передаются другой стороне.",
+      label: "Распределять лимит между союзными и вражескими точками" } },
+  { id: "ah64Wp", host: "ah64WpRulesHost", title: "DTC for DCS · WP 1–50", max: 50,
+    get: () => state.ah64.wp, types: AH64_WP_TYPES, zero: "0 — пресет не записывается." },
+];
+
+function buildPointRules() {
+  const options = (items) => items.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+  for (const hostId of [...new Set(POINT_RULES.map(cfg => cfg.host))]) {
+    const host = $(hostId);
+    host.innerHTML = POINT_RULES.filter(cfg => cfg.host === hostId).map(cfg => {
+      const special = cfg.special ? `
+      <div class="row">
+        <label>${cfg.special.title}<small>${cfg.special.note}</small></label>
+        <div class="ctrl"><label class="chk route-target"><input type="checkbox" data-point-rule="${cfg.id}" data-field="${cfg.special.field}">${cfg.special.label}</label></div>
+      </div>` : "";
+      return `
+    <div class="route-rule">
+      <h3>${cfg.title}</h3>
+      <div class="row">
+        <label>Типы точек<small>Отметьте любые категории; при снятых отметках таблица будет пустой.</small></label>
+        <div class="ctrl route-sources">${(cfg.types || ROUTE_TYPES).map(([value, label]) =>
+          `<label class="chk"><input type="checkbox" data-point-rule="${cfg.id}" data-source="${value}">${label}</label>`).join("")}</div>
+      </div>
+      <div class="row">
+        <label>Сторона<small>Фильтр по принадлежности объекта.</small></label>
+        <div class="ctrl"><select data-point-rule="${cfg.id}" data-field="side" aria-label="${cfg.title}: сторона">${options(ROUTE_SIDES)}</select></div>
+      </div>
+      <div class="row">
+        <label>Порядок записи<small>Определяет последовательность точек в таблице.</small></label>
+        <div class="ctrl"><select data-point-rule="${cfg.id}" data-field="order" aria-label="${cfg.title}: порядок">${options(ROUTE_ORDERS)}</select></div>
+      </div>
+      <div class="row">
+        <label>Дистанция от ЛБС<small>0 — вся карта, без ограничения по дистанции.</small></label>
+        <div class="ctrl"><input type="number" min="0" max="500" step="1" data-point-rule="${cfg.id}" data-field="range" aria-label="${cfg.title}: дистанция от ЛБС"><span class="unit">морских миль</span></div>
+      </div>
+      <div class="row">
+        <label>Лимит точек<small>${cfg.zero} Максимум ${cfg.max}.</small></label>
+        <div class="ctrl"><input type="number" min="0" max="${cfg.max}" step="1" data-point-rule="${cfg.id}" data-field="limit" aria-label="${cfg.title}: лимит точек"><span class="unit">точек</span></div>
+      </div>${special}
+    </div>`;
+    }).join("");
+    const update = (ev) => {
+      if (!ev.target.dataset.pointRule) return;
+      pointRulesFromUi();
+      markDirty();
+    };
+    host.addEventListener("input", update);
+    host.addEventListener("change", update);
+  }
+}
+
+function pointRulesToUi() {
+  for (const cfg of POINT_RULES) {
+    const rule = cfg.get();
+    for (const input of document.querySelectorAll(`input[data-point-rule="${cfg.id}"][data-source]`)) {
+      input.checked = rule.sources.includes(input.dataset.source);
+    }
+    for (const field of ["side", "order", "range", "limit"]) {
+      document.querySelector(`[data-point-rule="${cfg.id}"][data-field="${field}"]`).value = rule[field];
+    }
+    if (cfg.special) {
+      document.querySelector(`input[data-point-rule="${cfg.id}"][data-field="${cfg.special.field}"]`).checked = rule[cfg.special.field];
+    }
+  }
+}
+
+function pointRulesFromUi() {
+  for (const cfg of POINT_RULES) {
+    const rule = cfg.get();
+    rule.sources = Array.from(document.querySelectorAll(`input[data-point-rule="${cfg.id}"][data-source]:checked`))
+      .map(input => input.dataset.source);
+    rule.side = document.querySelector(`[data-point-rule="${cfg.id}"][data-field="side"]`).value;
+    rule.order = document.querySelector(`[data-point-rule="${cfg.id}"][data-field="order"]`).value;
+    const rangeText = document.querySelector(`[data-point-rule="${cfg.id}"][data-field="range"]`).value.trim();
+    const limitText = document.querySelector(`[data-point-rule="${cfg.id}"][data-field="limit"]`).value.trim();
+    const range = Number(rangeText), limit = Number(limitText);
+    if (rangeText !== "" && isFinite(range)) rule.range = Math.max(0, range);
+    if (limitText !== "" && isFinite(limit)) rule.limit = Math.max(0, Math.min(cfg.max, Math.round(limit)));
+    if (cfg.special) {
+      rule[cfg.special.field] = document.querySelector(`input[data-point-rule="${cfg.id}"][data-field="${cfg.special.field}"]`).checked;
+    }
+  }
 }
 
 function buildDisplays() {
@@ -1033,30 +1652,34 @@ function buildDisplays() {
   host.addEventListener("change", (ev) => {
     const t = ev.target;
     if (!(t instanceof HTMLSelectElement) || !t.dataset.disp) return;
-    const { seat, disp, slot, kind } = t.dataset;
-    const cur = state.displays[seat][disp][Number(slot)] || { page: "", mode: "NAV" };
-    cur[kind] = t.value;
-    state.displays[seat][disp][Number(slot)] = cur.page ? cur : null;
+    const { seat, disp, slot } = t.dataset;
+    const slotSelector = `select[data-seat="${seat}"][data-disp="${disp}"][data-slot="${slot}"]`;
+    const page = document.querySelector(`${slotSelector}[data-kind="page"]`).value;
+    const mode = document.querySelector(`${slotSelector}[data-kind="mode"]`).value;
+    state.displays[seat][disp][Number(slot)] = page ? { page, mode } : null;
     markDirty();
   });
 }
 
 function stateToUi() {
-  $("inTargets").value = state.TARGETS;
-  $("inRouteBNm").value = state.ROUTE_B_NM;
-  $("inRouteANm").value = state.ROUTE_A_NM;
+  $("inLandingRefresh").checked = state.landingRefresh;
+  routeRulesToUi();
+  pointRulesToUi();
   $("inThreats").value = state.THREATS;
   $("inRingColor").value = state.RING_COLOR;
   $("inRingStyle").value = state.RING_STYLE;
   $("inFrontColor").value = state.FRONT_COLOR;
   $("inFrontStyle").value = state.FRONT_STYLE;
+  $("inSectorSource").value = state.SECTOR_SOURCE;
+  $("inSectorColor").value = state.SECTOR_COLOR;
+  $("inSectorStyle").value = state.SECTOR_STYLE;
   for (const [seat, name] of DISPLAYS) {
     for (let i = 0; i < 3; i++) {
       const slot = state.displays[seat][name][i];
       const page = document.querySelector(`select[data-seat="${seat}"][data-disp="${name}"][data-slot="${i}"][data-kind="page"]`);
       const mode = document.querySelector(`select[data-seat="${seat}"][data-disp="${name}"][data-slot="${i}"][data-kind="mode"]`);
       if (page) page.value = slot ? slot.page : "";
-      if (mode) mode.value = slot ? slot.mode : "NAV";
+      if (mode) mode.value = slot ? slot.mode : MODES[i][0];
     }
   }
   $("inBingo").value = state.misc.Bingo ?? "";
@@ -1069,6 +1692,8 @@ function stateToUi() {
   $("inTgp").value = state.misc.TGPCode ?? "";
   f18ToUi();
   f16ToUi();
+  f14ToUi();
+  ah64ToUi();
   renderPreviews();
 }
 
@@ -1076,14 +1701,53 @@ function stateToUi() {
 
 let curProgram = "MAN_1";
 
+function buildF18LineAssignments() {
+  const host = $("f18LineAssignmentsHost");
+  host.innerHTML = F18_LINE_GROUPS.map(group => {
+    const options = f18LineSources(group).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+    return `
+    <div class="route-rule">
+      <h3>${group.title}</h3>
+      ${Array.from({ length: group.count }, (_, i) => {
+        const slot = i + 1;
+        const label = group.prefix === "CORRIDOR" ? `Коридор ${slot}` : `${group.prefix} ${slot}`;
+        return `<div class="row">
+          <label for="inF18_${group.prefix}_${slot}">${label}<small>Назначение для страницы SA.</small></label>
+          <div class="ctrl"><select id="inF18_${group.prefix}_${slot}" data-f18-line="${group.prefix}" data-slot="${i}">${options}</select></div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+  host.addEventListener("change", (ev) => {
+    if (!ev.target.dataset.f18Line) return;
+    f18LineAssignmentsFromUi();
+    markDirty();
+  });
+}
+
+function f18LineAssignmentsToUi() {
+  for (const group of F18_LINE_GROUPS) {
+    for (let i = 0; i < group.count; i++) {
+      $(`inF18_${group.prefix}_${i + 1}`).value = state.f18.lines[group.prefix][i];
+    }
+  }
+}
+
+function f18LineAssignmentsFromUi() {
+  for (const group of F18_LINE_GROUPS) {
+    for (let i = 0; i < group.count; i++) {
+      state.f18.lines[group.prefix][i] = $(`inF18_${group.prefix}_${i + 1}`).value;
+    }
+  }
+}
+
 function f18ToUi() {
   const f = state.f18;
+  f18LineAssignmentsToUi();
   $("inF18DefCorr").value = String(f.DEFAULT_CORRIDOR);
   $("inF18DefFaor").value = String(f.DEFAULT_FAOR);
   $("inF18DefFlot").value = String(f.DEFAULT_FLOT);
   $("inF18DefMez").value = String(f.DEFAULT_MEZ_LVL);
-  $("inF18Gps1Max").value = f.GPS1_MAX;
-  $("inF18Gps2Max").value = f.GPS2_MAX;
   $("inF18Threats").value = f.THREATS;
   $("inF18MinRange").value = f.MIN_RANGE;
   $("inF18ThreatLvl").value = String(f.THREAT_LEVEL);
@@ -1115,12 +1779,11 @@ function programFromUi() {
 
 function f18FromUi() {
   const f = state.f18;
+  f18LineAssignmentsFromUi();
   f.DEFAULT_CORRIDOR = Number($("inF18DefCorr").value);
   f.DEFAULT_FAOR = Number($("inF18DefFaor").value);
   f.DEFAULT_FLOT = Number($("inF18DefFlot").value);
   f.DEFAULT_MEZ_LVL = Number($("inF18DefMez").value);
-  f.GPS1_MAX = Math.max(0, Math.min(100, Math.round(numOrNull("inF18Gps1Max") ?? F18_DEFAULTS.GPS1_MAX)));
-  f.GPS2_MAX = Math.max(0, Math.min(100, Math.round(numOrNull("inF18Gps2Max") ?? F18_DEFAULTS.GPS2_MAX)));
   f.THREATS = Math.max(0, Math.min(40, Math.round(numOrNull("inF18Threats") ?? F18_DEFAULTS.THREATS)));
   f.MIN_RANGE = Math.max(0, numOrNull("inF18MinRange") ?? F18_DEFAULTS.MIN_RANGE);
   f.THREAT_LEVEL = Math.max(1, Math.min(3, Math.round(numOrNull("inF18ThreatLvl") ?? F18_DEFAULTS.THREAT_LEVEL)));
@@ -1242,20 +1905,58 @@ function f16FromUi() {
   f.colrOn = $("inF16ColrOn").checked;
 }
 
+function f14ToUi() {
+  const f = state.f14;
+  $("inF14Lines").value = f.LINES;
+  $("inF14LinePts").value = f.LINE_PTS;
+  $("inF14WpOn").checked = f.wpOn;
+}
+
+function f14FromUi() {
+  const f = state.f14;
+  const lines = numOrNull("inF14Lines");
+  const linePts = numOrNull("inF14LinePts");
+  if (lines !== null) f.LINES = Math.max(1, Math.min(4, Math.round(lines)));
+  if (linePts !== null) f.LINE_PTS = Math.max(2, Math.min(9, Math.round(linePts)));
+  f.wpOn = $("inF14WpOn").checked;
+}
+
+function ah64ToUi() {
+  const f = state.ah64;
+  for (const [key, id] of AH64_FIELDS) $(id).value = f[key];
+  $("inAh64OwnAd").checked = f.OWN_AD;
+  $("inAh64WpOn").checked = f.wpOn;
+}
+
+function ah64FromUi() {
+  const f = state.ah64;
+  for (const [key, id, min, max, integer] of AH64_FIELDS) {
+    const value = numOrNull(id);
+    if (value === null) continue;
+    const parsed = integer ? Math.round(value) : value;
+    f[key] = Math.max(min, max === null ? parsed : Math.min(max, parsed));
+  }
+  f.OWN_AD = $("inAh64OwnAd").checked;
+  f.wpOn = $("inAh64WpOn").checked;
+}
+
 function numOrNull(id) {
   const v = $(id).value.trim();
   return v === "" || !isFinite(Number(v)) ? null : Number(v);
 }
 
 function uiToState() {
-  state.TARGETS = Math.max(0, Math.min(99, Math.round(numOrNull("inTargets") ?? DEFAULTS.TARGETS)));
-  state.ROUTE_B_NM = Math.max(0, numOrNull("inRouteBNm") ?? DEFAULTS.ROUTE_B_NM);
-  state.ROUTE_A_NM = Math.max(0, numOrNull("inRouteANm") ?? DEFAULTS.ROUTE_A_NM);
+  state.landingRefresh = $("inLandingRefresh").checked;
+  routeRulesFromUi();
+  pointRulesFromUi();
   state.THREATS = Math.max(0, Math.min(30, Math.round(numOrNull("inThreats") ?? DEFAULTS.THREATS)));
   state.RING_COLOR = $("inRingColor").value;
   state.RING_STYLE = $("inRingStyle").value;
   state.FRONT_COLOR = $("inFrontColor").value;
   state.FRONT_STYLE = $("inFrontStyle").value;
+  state.SECTOR_SOURCE = $("inSectorSource").value;
+  state.SECTOR_COLOR = $("inSectorColor").value;
+  state.SECTOR_STYLE = $("inSectorStyle").value;
   state.misc.Bingo = numOrNull("inBingo");
   state.misc.CARAALOW = numOrNull("inCara");
   state.misc.TACANChannel = numOrNull("inTacanCh");
@@ -1266,6 +1967,8 @@ function uiToState() {
   state.misc.TGPCode = numOrNull("inTgp");
   f18FromUi();
   f16FromUi();
+  f14FromUi();
+  ah64FromUi();
 }
 
 let dirty = false;
@@ -1295,6 +1998,8 @@ async function openFile() {
 function applyText(text, name) {
   sourceText = text;
   state = defaultState();
+  const landingRefresh = luaScalar(maskComments(text), "LANDING_REFRESH");
+  if (landingRefresh !== null) state.landingRefresh = landingRefresh === "true";
   const found = [];
   const b15 = findBlockText(text, "F-15ESE");
   if (b15 !== null) { parseF15EBlock(b15, state); found.push("F-15ESE"); }
@@ -1302,6 +2007,10 @@ function applyText(text, name) {
   if (b18 !== null) { parseF18Block(b18, state); found.push("FA-18C_hornet"); }
   const b16 = findBlockText(text, "F-16C_50");
   if (b16 !== null) { parseF16Block(b16, state); found.push("F-16C_50"); }
+  const b14 = findBlockText(text, "F-14BU");
+  if (b14 !== null) { parseF14Block(b14, state); found.push("F-14BU"); }
+  const b64 = findBlockText(text, "AH-64D_BLK_II");
+  if (b64 !== null) { parseAh64Block(b64, state); found.push("AH-64D_BLK_II"); }
   stateToUi();
   if (found.length) {
     $("fileStatus").innerHTML = `Файл: <span class="mono">${name}</span> — загружены разделы: ${found.join(", ")}`;
@@ -1316,7 +2025,7 @@ function applyText(text, name) {
 async function saveFile() {
   if (!fileHandle) return;
   uiToState();
-  const text = spliceConfig(sourceText, genBlocks(state));
+  const text = spliceConfig(sourceText, genBlocks(state), state.landingRefresh);
   try {
     const w = await fileHandle.createWritable();
     await w.write(text);
@@ -1331,7 +2040,7 @@ async function saveFile() {
 
 function downloadFile() {
   uiToState();
-  const text = spliceConfig(sourceText, genBlocks(state));
+  const text = spliceConfig(sourceText, genBlocks(state), state.landingRefresh);
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -1349,6 +2058,8 @@ const AIRCRAFT_PAGES = [
   { id: "f15e", label: "F-15E Strike Eagle" },
   { id: "f18", label: "F/A-18C Hornet" },
   { id: "f16", label: "F-16C Viper" },
+  { id: "f14", label: "F-14B(U)" },
+  { id: "ah64", label: "AH-64D Apache" },
 ];
 function buildTabs() {
   const host = $("acTabs");
@@ -1393,22 +2104,30 @@ fillSelect("inF18CmdsProg", F18_PROGRAMS, (v) => F18_PROGRAM_LABELS[v] || v);
 fillSelect("inF16CmdsDelay", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], (v) => (v === 0 ? "No Delay" : v + " сек"));
 fillSelect("inF16CmdsProg", F16_PROGRAMS, (v) => F16_PROGRAM_LABELS[v] || v);
 
+buildRouteRules();
+buildPointRules();
+buildF18LineAssignments();
 buildDisplays();
 buildF16Cons();
 buildF16Colr();
 stateToUi();
 
+$("inLandingRefresh").addEventListener("change", () => {
+  state.landingRefresh = $("inLandingRefresh").checked;
+  markDirty();
+});
+
 const scalarBindings = [
-  ["inTargets", "TARGETS"], ["inRouteBNm", "ROUTE_B_NM"], ["inRouteANm", "ROUTE_A_NM"],
   ["inThreats", "THREATS"],
   ["inRingColor", "RING_COLOR"], ["inRingStyle", "RING_STYLE"],
   ["inFrontColor", "FRONT_COLOR"], ["inFrontStyle", "FRONT_STYLE"],
+  ["inSectorSource", "SECTOR_SOURCE"], ["inSectorColor", "SECTOR_COLOR"], ["inSectorStyle", "SECTOR_STYLE"],
 ];
 for (const [id, key] of scalarBindings) {
   $(id).addEventListener("input", () => {
     const el = $(id);
     state[key] = el.type === "number" ? Number(el.value) : el.value;
-    if (key.startsWith("RING") || key.startsWith("FRONT")) renderPreviews();
+    if (key.startsWith("RING") || key.startsWith("FRONT") || key.startsWith("SECTOR")) renderPreviews();
     markDirty();
   });
 }
@@ -1429,7 +2148,6 @@ $("inTacanOn").addEventListener("change", () => { state.misc.TACANOn = $("inTaca
 const f18Bindings = [
   ["inF18DefCorr", "DEFAULT_CORRIDOR"], ["inF18DefFaor", "DEFAULT_FAOR"],
   ["inF18DefFlot", "DEFAULT_FLOT"], ["inF18DefMez", "DEFAULT_MEZ_LVL"],
-  ["inF18Gps1Max", "GPS1_MAX"], ["inF18Gps2Max", "GPS2_MAX"],
   ["inF18Threats", "THREATS"], ["inF18MinRange", "MIN_RANGE"], ["inF18ThreatLvl", "THREAT_LEVEL"],
 ];
 for (const [id, key] of f18Bindings) {
@@ -1477,6 +2195,27 @@ $("inF16CmdsProg").addEventListener("change", () => {
   f16ProgramToUi();
 });
 
+// ---- F-14B(U) and AH-64D wiring ----
+
+for (const [id, key] of [["inF14Lines", "LINES"], ["inF14LinePts", "LINE_PTS"]]) {
+  $(id).addEventListener("input", () => {
+    const value = numOrNull(id);
+    if (value !== null) state.f14[key] = value;
+    markDirty();
+  });
+}
+$("inF14WpOn").addEventListener("change", () => { state.f14.wpOn = $("inF14WpOn").checked; markDirty(); });
+
+for (const [key, id] of AH64_FIELDS) {
+  $(id).addEventListener("input", () => {
+    const value = numOrNull(id);
+    if (value !== null) state.ah64[key] = value;
+    markDirty();
+  });
+}
+$("inAh64OwnAd").addEventListener("change", () => { state.ah64.OWN_AD = $("inAh64OwnAd").checked; markDirty(); });
+$("inAh64WpOn").addEventListener("change", () => { state.ah64.wpOn = $("inAh64WpOn").checked; markDirty(); });
+
 $("btnOpen").addEventListener("click", openFile);
 $("btnSave").addEventListener("click", saveFile);
 $("btnDownload").addEventListener("click", downloadFile);
@@ -1501,8 +2240,8 @@ input.addEventListener("change", async () => {
 window.__sarmat = {
   getState: () => state,
   setState: (s) => { state = s; stateToUi(); },
-  genBlock, genF18Block, genF16Block, genBlocks, spliceConfig,
-  parseF15EBlock, parseF18Block, parseF16Block, applyText,
+  genBlock, genF18Block, genF16Block, genF14Block, genAh64Block, genBlocks, spliceConfig,
+  parseF15EBlock, parseF18Block, parseF16Block, parseF14Block, parseAh64Block, applyText,
 };
 
 </script>

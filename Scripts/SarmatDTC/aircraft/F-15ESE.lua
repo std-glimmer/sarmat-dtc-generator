@@ -1,18 +1,20 @@
 -- F-15E Strike Eagle (DCS type "F-15ESE"): a "DTC for DCS" JSON preset for Haack's F-15E DTC
 -- mod, in the format the strike-eagle-dtc tool exports (src/eagle_dtc/dtcfile.py there is the
 -- reference): Aircraft "F15E", Version 2, coordinates "N 36°16.819’" (prime = U+2019), feet.
--- The mod looks for F-15E presets in Documents\DCS-DTC\Presets\F15E (the tool's export folder),
--- so the file appears there as the preset "SARMAT".
+-- One builder writes the same cartridge to two places: the DCS-DTC preset in
+-- Documents\DCS-DTC\Presets\F15E and the directly loadable Modern F-15E cartridge in
+-- <DCS profile>\ModernF15E\Cartridges. Both appear under the name "SARMAT".
 --
 -- What the cartridge holds (DCS has no native DTC editor for the F-15E, there is no "dcs-dtc"
 -- output here):
---   Route A  enemy airfields and FARPs/FOBs within ROUTE_A_NM of the front line,
---            closest to the front first (target points)
---   Route B  enemy strongpoints (OP*) and strongholds within ROUTE_B_NM of the front line,
---            ordered east to west (target points)
---   Route C  own airfields and FARPs/FOBs, closest to the front line first (steerpoints)
---   drawings the front line (red solid) and the engagement rings of enemy SAMs (yellow dashed);
---            the mod merges them into the SIT page, it draws at most 32 shapes in total
+--   Routes A/B/C are independently configurable with ROUTE_<id>_* options: source categories,
+--   own/enemy/all, range from the front, point limit, ordering and target/steerpoint flag.
+--   Defaults: A = enemy airfields/FARPs near the front; B = enemy strongpoints/strongholds
+--   east to west; C = own airfields only, closest to the front first.
+--   drawings include the front line (red solid), optional sector boundaries (white dotted),
+--            and engagement rings of enemy SAMs (yellow dashed); the mod merges them into
+--            the SIT page and draws at most 32 shapes in total, including mission drawings.
+--            Our front line has priority, followed by sector boundaries and threat rings.
 -- Radios/SmartWeapons are left out: the live map has no data for them (Upload flags false).
 -- Display page presets and Misc (bingo, CARA, TACAN, ILS, TGP code) come from config.user.lua
 -- (or the SarmatDTC configurator): OPTIONS["F-15ESE"].DISPLAYS / .MISC, see the bottom of this file.
@@ -53,20 +55,17 @@ local function ring(lat, lon, radiusM, n)
     return coords
 end
 
+local function closedRing(points)
+    local out = {}
+    for i, p in ipairs(points) do out[i] = p end
+    local first, last = out[1], out[#out]
+    if first and last and (first.x ~= last.x or first.z ~= last.z) then out[#out + 1] = first end
+    return out
+end
+
 -- Sort by distance to the front line ascending (stable).
 local function byFront(lib, s, list)
     return lib.byScore(list, function(p) return lib.distToPolyline(p.x, p.z, s.front) end)
-end
-
--- Sort east to west (DCS z is the east axis), north to south on ties.
-local function eastToWest(list)
-    local out = {}
-    for i, p in ipairs(list) do out[i] = p end
-    table.sort(out, function(a, b)
-        if a.z ~= b.z then return a.z > b.z end
-        return a.x > b.x
-    end)
-    return out
 end
 
 local LINE_STYLES = { solid = true, dash = true, dot = true, dotdash = true }
@@ -159,10 +158,25 @@ end
 return {
     type = TYPE,
     options = {
-        ROUTE_A_NM  = 50,      -- route A: enemy airfields/FARPs this close to the front [NM]
-        ROUTE_B_NM  = 20,      -- route B: enemy strongpoints/strongholds this close to the front [NM]
-        TARGETS     = 99,      -- route B: at most this many target points
-        MAX_WP      = 99,      -- waypoints per route (the jet's route holds 99)
+        ROUTE_A_NM  = 50,      -- maximum distance from the front [NM], 0 = unlimited
+        ROUTE_B_NM  = 20,
+        ROUTE_C_NM  = 0,
+        TARGETS     = 99,      -- route B point limit (legacy option name)
+        ROUTE_A_LIMIT = 99,
+        ROUTE_C_LIMIT = 99,
+        ROUTE_A_SOURCES = "AIRFIELDS,FARPS",
+        ROUTE_B_SOURCES = "STRONGPOINTS,STRONGHOLDS",
+        ROUTE_C_SOURCES = "AIRFIELDS",
+        ROUTE_A_SIDE = "ENEMY", -- OWN | ENEMY | ALL
+        ROUTE_B_SIDE = "ENEMY",
+        ROUTE_C_SIDE = "OWN",
+        ROUTE_A_ORDER = "FRONT", -- FRONT | FRONT_FAR | EAST_WEST | WEST_EAST |
+        ROUTE_B_ORDER = "EAST_WEST", -- NORTH_SOUTH | SOUTH_NORTH | NAME | MAP
+        ROUTE_C_ORDER = "FRONT",
+        ROUTE_A_TARGET = true,  -- target points instead of ordinary steerpoints
+        ROUTE_B_TARGET = true,
+        ROUTE_C_TARGET = false,
+        MAX_WP      = 99,      -- safety cap per route (the jet's route holds 99)
         THREATS     = 0,       -- SAM engagement rings drawn on the SIT page. 0 = none: the Modern
                                -- F-15E mod draws its own SAM/EWR rings natively (amber/gray/magenta,
                                -- on SIT and TSD), our GeoJSON rings would overlap them. Set e.g. 24
@@ -172,6 +186,9 @@ return {
         FRONT_PTS   = 30,      -- front line points in the drawing (0 = no line)
         FRONT_COLOR = "#FF0000",
         FRONT_STYLE = "solid", -- solid | dash | dot | dotdash
+        SECTOR_SOURCE = "NONE", -- NONE | ACTIVE_SECTORS | OWN_SECTORS | ENEMY_SECTORS | ALL_SECTORS
+        SECTOR_COLOR = "#FFFFFF",
+        SECTOR_STYLE = "dot",  -- solid | dash | dot | dotdash
         RING_PTS    = 24,      -- polygon segments per threat ring
         RING_COLOR  = "#FFFF00",
         RING_STYLE  = "dash",
@@ -181,7 +198,9 @@ return {
         --          TACANMode = "TR", TACANOn = true, ILSFrequency = 108.5, TGPCode = 1688 }
     },
     limits = {
-        ROUTE_A_NM = { 0 }, ROUTE_B_NM = { 0 }, TARGETS = { 0, 99, int = true },
+        ROUTE_A_NM = { 0 }, ROUTE_B_NM = { 0 }, ROUTE_C_NM = { 0 },
+        TARGETS = { 0, 99, int = true },
+        ROUTE_A_LIMIT = { 0, 99, int = true }, ROUTE_C_LIMIT = { 0, 99, int = true },
         MAX_WP = { 1, 99, int = true },
         THREATS = { 0, 30, int = true },       -- the mod draws at most 32 shapes, the front line is one
         FRONT_PTS = { 0, 100, int = true }, RING_PTS = { 8, 48, int = true },
@@ -206,52 +225,74 @@ return {
                     return lib.distToPolyline(p.x, p.z, s.front) <= nm * NM
                 end
 
-                -- Route A: enemy airfields and FARPs/FOBs near the front, closest first
-                local rteASrc = {}
-                for _, a in ipairs(s.airfields) do
-                    if not a.friendly and nearFront(a, opt.ROUTE_A_NM) then rteASrc[#rteASrc + 1] = a end
-                end
-                for _, f in ipairs(s.farps) do
-                    if not f.friendly and nearFront(f, opt.ROUTE_A_NM) then rteASrc[#rteASrc + 1] = f end
-                end
-                local routeA = {}
-                for _, p in ipairs(byFront(lib, s, rteASrc)) do
-                    if #routeA >= opt.MAX_WP then break end
-                    routeA[#routeA + 1] = wp(#routeA + 1, p, true)
+                local sourceLists = {
+                    { "AIRFIELDS", s.airfields }, { "FARPS", s.farps },
+                    { "STRONGPOINTS", s.strongpoints }, { "STRONGHOLDS", s.strongholds },
+                }
+                local function buildRoute(sourceText, side, rangeNm, limit, order, target)
+                    local sources = "," .. string.upper(tostring(sourceText or "")):gsub("%s", "") .. ","
+                    side = string.upper(tostring(side or "ALL"))
+                    local selected = {}
+                    for _, entry in ipairs(sourceLists) do
+                        if string.find(sources, "," .. entry[1] .. ",", 1, true) then
+                            for _, p in ipairs(entry[2]) do
+                                local sideOk = side == "ALL" or (side == "OWN" and p.friendly)
+                                    or (side == "ENEMY" and not p.friendly)
+                                if sideOk and (rangeNm <= 0 or nearFront(p, rangeNm)) then
+                                    selected[#selected + 1] = p
+                                end
+                            end
+                        end
+                    end
+                    order = string.upper(tostring(order or "FRONT"))
+                    local ordered
+                    if order == "MAP" then
+                        ordered = selected
+                    elseif order == "FRONT_FAR" then
+                        ordered = lib.byScore(selected, function(p)
+                            return -lib.distToPolyline(p.x, p.z, s.front)
+                        end)
+                    elseif order == "NAME" then
+                        ordered = {}
+                        for i, p in ipairs(selected) do ordered[i] = p end
+                        table.sort(ordered, function(a, b) return a.name < b.name end)
+                    elseif order ~= "FRONT" then
+                        local axis = (order == "NORTH_SOUTH" or order == "SOUTH_NORTH") and "x" or "z"
+                        local descending = order == "EAST_WEST" or order == "NORTH_SOUTH"
+                        ordered = {}
+                        for i, p in ipairs(selected) do ordered[i] = p end
+                        table.sort(ordered, function(a, b)
+                            if a[axis] ~= b[axis] then
+                                if descending then return a[axis] > b[axis] end
+                            return a[axis] < b[axis]
+                            end
+                            return a.name < b.name
+                        end)
+                    else
+                        ordered = byFront(lib, s, selected)
+                    end
+                    local route = {}
+                    local maxPoints = math.min(opt.MAX_WP, limit)
+                    for _, p in ipairs(ordered) do
+                        if #route >= maxPoints then break end
+                        route[#route + 1] = wp(#route + 1, p, target == true)
+                    end
+                    return route
                 end
 
-                -- Route B: enemy strongpoints and strongholds near the front, east to west
-                local rteBSrc = {}
-                for _, p in ipairs(s.strongpoints) do
-                    if not p.friendly and nearFront(p, opt.ROUTE_B_NM) then rteBSrc[#rteBSrc + 1] = p end
-                end
-                for _, p in ipairs(s.strongholds) do
-                    if not p.friendly and nearFront(p, opt.ROUTE_B_NM) then rteBSrc[#rteBSrc + 1] = p end
-                end
-                local routeB = {}
-                local maxTargets = math.min(opt.MAX_WP, opt.TARGETS)
-                for _, p in ipairs(eastToWest(rteBSrc)) do
-                    if #routeB >= maxTargets then break end
-                    routeB[#routeB + 1] = wp(#routeB + 1, p, true)
-                end
+                local routeA = buildRoute(opt.ROUTE_A_SOURCES, opt.ROUTE_A_SIDE, opt.ROUTE_A_NM,
+                    opt.ROUTE_A_LIMIT, opt.ROUTE_A_ORDER, opt.ROUTE_A_TARGET)
+                local routeB = buildRoute(opt.ROUTE_B_SOURCES, opt.ROUTE_B_SIDE, opt.ROUTE_B_NM,
+                    opt.TARGETS, opt.ROUTE_B_ORDER, opt.ROUTE_B_TARGET)
+                local routeC = buildRoute(opt.ROUTE_C_SOURCES, opt.ROUTE_C_SIDE, opt.ROUTE_C_NM,
+                    opt.ROUTE_C_LIMIT, opt.ROUTE_C_ORDER, opt.ROUTE_C_TARGET)
 
-                -- Route C: own airfields and FARPs/FOBs, closest to the front first
-                local rteCSrc = {}
-                for _, a in ipairs(s.airfields) do
-                    if a.friendly then rteCSrc[#rteCSrc + 1] = a end
-                end
-                for _, f in ipairs(s.farps) do
-                    if f.friendly then rteCSrc[#rteCSrc + 1] = f end
-                end
-                local routeC = {}
-                for _, p in ipairs(byFront(lib, s, rteCSrc)) do
-                    if #routeC >= opt.MAX_WP then break end
-                    routeC[#routeC + 1] = wp(#routeC + 1, p, false)
-                end
-
-                -- Drawings: front line + threat rings (color/style from options)
+                -- Drawings: front line + sector boundaries + threat rings. The mod's 32-shape
+                -- budget is shared with mission drawings; our own priority is front > sectors > rings.
                 local frontColor = cssColor(opt.FRONT_COLOR, "#FF0000")
                 local frontStyle = lineStyle(opt.FRONT_STYLE, "solid")
+                local sectorColor = cssColor(opt.SECTOR_COLOR, "#FFFFFF")
+                local sectorStyle = lineStyle(opt.SECTOR_STYLE, "dot")
                 local ringColor = cssColor(opt.RING_COLOR, "#FFFF00")
                 local ringStyle = lineStyle(opt.RING_STYLE, "dash")
                 local drawings = {}
@@ -268,8 +309,43 @@ return {
                                   color = frontColor, style = frontStyle },
                               geometry = { type = "LineString", coordinates = coords } } } } }
                 end
+                local frontCount = #drawings
+                local sectors = {}
+                local sectorSource = string.upper(tostring(opt.SECTOR_SOURCE or "NONE"))
+                local active = sectorSource == "ACTIVE_SECTORS" and lib.activeSectors(s) or nil
+                local activeSet = {}
+                for _, sec in ipairs(active or {}) do activeSet[sec] = true end
+                if sectorSource ~= "NONE" then
+                    for i, sec in ipairs(s.sectors) do
+                        if #sectors >= 32 - frontCount then break end
+                        local selected = sectorSource == "ALL_SECTORS"
+                            or (sectorSource == "ACTIVE_SECTORS" and activeSet[sec])
+                            or (sectorSource == "OWN_SECTORS" and sec.owner == s.side)
+                            or (sectorSource == "ENEMY_SECTORS" and sec.owner ~= s.side)
+                        if selected then
+                            local coords = {}
+                            for j, p in ipairs(lib.simplify(closedRing(sec.ring), 64)) do
+                                local lat, lon = lib.latLon(s.env, p.x, p.z)
+                                coords[j] = { round6(lon), round6(lat) }
+                            end
+                            if #coords >= 4 then
+                                local label = tostring(sec.name or "")
+                                if label == "" then label = tostring(i) end
+                                sectors[#sectors + 1] = { type = "Feature",
+                                    properties = { name = "SARMAT SECTOR " .. label, side = "all",
+                                        color = sectorColor, style = sectorStyle },
+                                    geometry = { type = "Polygon", coordinates = { coords } } }
+                            end
+                        end
+                    end
+                end
+                if #sectors > 0 then
+                    drawings[#drawings + 1] = { name = "SARMAT sectors.geojson",
+                        geojson = { type = "FeatureCollection", features = sectors } }
+                end
                 local rings = {}
-                for _, t in ipairs(lib.enemyThreats(s, opt.THREATS, opt)) do
+                local ringLimit = math.max(0, math.min(opt.THREATS, 32 - frontCount - #sectors))
+                for _, t in ipairs(lib.enemyThreats(s, ringLimit, opt)) do
                     local lat, lon = lib.latLon(s.env, t.x, t.z)
                     rings[#rings + 1] = { type = "Feature",
                         properties = { name = t.key .. " " .. lib.round(t.range / NM, 0.1) .. "NM",
@@ -284,7 +360,7 @@ return {
 
                 if #routeA == 0 and #routeB == 0 and #routeC == 0 and #drawings == 0
                     and opt.DISPLAYS == nil and opt.MISC == nil then
-                    return nil, { routeA = 0, routeB = 0, routeC = 0, threats = 0, front = 0 }
+                    return nil, { routeA = 0, routeB = 0, routeC = 0, threats = 0, front = 0, sectors = 0 }
                 end
                 local displays = displaysNode(opt.DISPLAYS)
                 local misc = miscNode(opt.MISC)
@@ -304,7 +380,18 @@ return {
                 if misc then doc.Misc = misc end
                 if #drawings > 0 then doc.drawings = drawings end
                 return doc, { routeA = #routeA, routeB = #routeB, routeC = #routeC,
-                    threats = #rings, front = opt.FRONT_PTS >= 2 and #s.front >= 2 and 1 or 0 }
+                    threats = #rings, front = frontCount, sectors = #sectors }
+            end,
+        },
+        {
+            id     = "f15e-modern",
+            format = "json",
+            dir    = "ModernF15E\\Cartridges",
+            file   = "SARMAT.json",
+            -- The tray app reads its own imported copy, not the DCS-DTC preset directly.
+            -- Reuse the previous output so both files always contain the same cartridge.
+            build  = function(s, lib, opt, built)
+                return built["f15e-dtc"]
             end,
         },
     },

@@ -32,11 +32,12 @@ try {
     Write-Host "== hook"
     # fake Saved Games folder on a short path (os.execute command length limit)
     $sim = Join-Path $env:TEMP ("sdtc" + (Get-Random -Maximum 99999))
-    New-Item -ItemType Directory -Force "$sim\Scripts\SarmatDTC\aircraft", "$sim\srv" | Out-Null
+    New-Item -ItemType Directory -Force "$sim\Scripts\SarmatDTC\aircraft", "$sim\srv\data", "$sim\srv\api" | Out-Null
     Get-ChildItem $scriptDir -File | Where-Object Name -ne "config.user.lua" | Copy-Item -Destination "$sim\Scripts\SarmatDTC\"
     Get-ChildItem "$scriptDir\aircraft" -File | Copy-Item -Destination "$sim\Scripts\SarmatDTC\aircraft\"
-    Copy-Item "$PSScriptRoot\fixtures\*.json" "$sim\srv\"
-    $base = "file:///" + (($sim -replace '\\', '/') -replace ' ', '%20') + "/srv/"
+    Copy-Item "$PSScriptRoot\fixtures\*.json" "$sim\srv\data\"
+    Copy-Item "$PSScriptRoot\fixtures\side_data.json" "$sim\srv\api\side_data"
+    $base = "file:///" + (($sim -replace '\\', '/') -replace ' ', '%20') + "/srv/data/"
     & $luae "$PSScriptRoot\test_hook.lua" $sim $base
     if ($LASTEXITCODE -ne 0) { $failed++ }
     Remove-Item -LiteralPath $sim -Recurse -Force

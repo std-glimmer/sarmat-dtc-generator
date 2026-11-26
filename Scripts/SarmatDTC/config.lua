@@ -5,6 +5,8 @@
 --     return {
 --         AIRCRAFT = { "AH-64D_BLK_II", "F-16C_50" },                   -- replaces the list below
 --         DTC_DIR  = "DTC\\SARMAT",                                      -- replaces the folder below
+--         MAP_CODE = "AB2C3D",                                         -- DCS F10 > Settings > Website code
+--         LANDING_REFRESH = false,                                     -- true also updates after own-base landing
 --         BASE_DTC = { ["AH-64D_BLK_II"] = "AH-64D_BLK_II_DTC_SAR_3.dtc" },
 --         OPTIONS  = { ["AH-64D_BLK_II"] = { CTRLM_FARPS = 15 } },     -- replaces the entry per aircraft
 --     }
@@ -24,6 +26,16 @@ return {
     -- In DCS, Import in the DTC manager opens Saved Games\...\DTC: browse to this folder there.
     -- OPTIONS[type].outputs["dcs-dtc"].dir overrides it for one aircraft.
     DTC_DIR = "C:\\Users\\Прохор\\Saved Games",
+
+    -- Website code from DCS: F10 > Settings > Website code. Required by the updated map
+    -- for ground-unit positions. Keep your real code in config.user.lua, not in this file.
+    -- Without it, front/objectives/static SAMs still work and a chat notice is shown.
+    MAP_CODE = "",
+
+    -- false (safe default): write files only on respawn / slot change; landing events are ignored.
+    -- true: after landing at an own-coalition base from the cached map, recenter and refresh after download.
+    -- No synchronous query to the DCS mission environment is made on landing.
+    LANDING_REFRESH = false,
 
     -- Base DCS cartridge per aircraft (DCS native .dtc only): every field the script does not fill
     -- (radios, CMDS, laser codes, waypoints, ...) is taken from it. File name in
