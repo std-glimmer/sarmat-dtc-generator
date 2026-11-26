@@ -31,7 +31,11 @@
 --                               adLead: the lead unit itself is that AD type
 --   s.sites                     { {x, z, friendly, ad, name}, ... } SAM sites without a live group
 --   s.farps                     { {x, z, friendly, name, kind}, ... } FARPs / FOBs ("FARP" | "FOB")
---   s.spawn                     { x, z, name } own start base, nil if unknown
+--   s.airfields                 { {x, z, friendly, name}, ... } airfields
+--   s.strongholds               { {x, z, friendly, name}, ... } stronghold objectives
+--   s.strongpoints              { {x, z, friendly, name}, ... } alive strongpoints (kind "OP*")
+--   s.depots                    { {x, z, friendly, name}, ... } alive depots (status.depots3)
+--   s.spawn                     { x, z, name } own start/last accepted landing base, nil if unknown
 --   s.env                       terrain id and terrain callbacks (for lib.elevation/latLon/cartridge)
 -- DCS DTC stores DCS x as `x` and DCS z as `y`.
 --
@@ -43,6 +47,7 @@
 --              THREAT_DEFS[key] = { name (ED threat name), text, range [m], alt [m] }, AD_TYPES
 --   terrain    elevation(env, x, z) [m], latLon(env, x, z)
 --   output     cartridge(type, env) -> { type, name, terrain }, CARTRIDGE_NAME, asciiUpper(s, maxLen),
+--              dcsDtcWaypoint(env, sequence, name, x, z) -> DTC for DCS V2 waypoint (feet),
 --              toLua(value), NATIVE_OUTPUT ("dcs-dtc")
 --
 -- Outputs: { id, format, dir, file, enabled, build(s, lib, opt, built) -> content, stats }.

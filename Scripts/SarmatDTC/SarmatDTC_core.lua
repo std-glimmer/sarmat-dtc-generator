@@ -6,7 +6,7 @@
 --     terrain   = "Syria",                            -- DCS terrain id written into the cartridges
 --     getHeight = function(x, z) return m end,        -- optional, terrain elevation [m]
 --     toLatLon  = function(x, z) return lat, lon end, -- optional
---     spawn     = { x, z, name },                     -- optional, own slot's start base
+--     spawn     = { x, z, name },                     -- optional, own start/last accepted landing base
 -- }
 -- Coordinates: SARMAT x/z are DCS map coordinates; DTC files store them as x (north) / y (east).
 --
@@ -131,6 +131,61 @@ end
 
 M.dist = dist
 
+-- Point-in-polygon on x/z (ray cast); ring = { {x, z}, ... } (closed or not).
+function M.pointInPolygon(x, z, ring)
+    local inside, j = false, #ring
+    for i = 1, #ring do
+        local xi, zi, xj, zj = ring[i].x, ring[i].z, ring[j].x, ring[j].z
+        if (zi > z) ~= (zj > z) and x < (xj - xi) * (z - zi) / (zj - zi) + xi then
+            inside = not inside
+        end
+        j = i
+    end
+    return inside
+end
+
+-- Segments (ax,az)-(bx,bz) and (cx,cz)-(dx,dz) properly cross.
+local function segsCross(ax, az, bx, bz, cx, cz, dx, dz)
+    local d1 = (dx - cx) * (az - cz) - (dz - cz) * (ax - cx)
+    local d2 = (dx - cx) * (bz - cz) - (dz - cz) * (bx - cx)
+    local d3 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax)
+    local d4 = (bx - ax) * (dz - az) - (bz - az) * (dx - ax)
+    return ((d1 > 0) ~= (d2 > 0)) and ((d3 > 0) ~= (d4 > 0))
+end
+
+-- The sectors of s.sectors the front line runs through (a front point inside the ring, or
+-- the ring and the front polyline cross). nil when the map data has no sectors at all.
+function M.activeSectors(s)
+    if #s.sectors == 0 then return nil end
+    local out = {}
+    for _, sec in ipairs(s.sectors) do
+        local hit = false
+        for _, p in ipairs(s.front) do
+            if M.pointInPolygon(p.x, p.z, sec.ring) then hit = true break end
+        end
+        local ring = sec.ring
+        for i = 1, #ring - 1 do
+            if hit then break end
+            for j = 1, #s.front - 1 do
+                if segsCross(ring[i].x, ring[i].z, ring[i + 1].x, ring[i + 1].z,
+                    s.front[j].x, s.front[j].z, s.front[j + 1].x, s.front[j + 1].z) then
+                    hit = true break
+                end
+            end
+        end
+        if hit then out[#out + 1] = sec end
+    end
+    return out
+end
+
+-- x/z inside any of the given sector rings.
+function M.inAnySector(x, z, sectors)
+    for _, sec in ipairs(sectors) do
+        if M.pointInPolygon(x, z, sec.ring) then return true end
+    end
+    return false
+end
+
 ------------------------------------------------------------------------------
 -- terrain helpers for modules
 ------------------------------------------------------------------------------
@@ -149,6 +204,27 @@ function M.latLon(env, x, z)
         if ok and lat then return lat, lon end
     end
     return 0, 0
+end
+
+local function dcsDtcDm(value, pos, neg, degDigits)
+    local a = math.abs(value)
+    local deg = math.floor(a)
+    local minutes = math.floor((a - deg) * 60000 + 0.5) / 1000
+    if minutes >= 60 then deg, minutes = deg + 1, 0 end
+    return string.format("%s %0" .. degDigits .. "d\194\176%06.3f\226\128\153",
+        value >= 0 and pos or neg, deg, minutes)
+end
+
+-- DTC for DCS Version 2 waypoint: degrees/minutes with U+00B0/U+2019, elevation in feet.
+function M.dcsDtcWaypoint(env, sequence, name, x, z)
+    local lat, lon = M.latLon(env, x, z)
+    return {
+        Sequence = sequence,
+        Name = M.asciiUpper(name, 12),
+        Latitude = dcsDtcDm(lat, "N", "S", 2),
+        Longitude = dcsDtcDm(lon, "E", "W", 3),
+        Elevation = math.floor(M.elevation(env, x, z) * 3.28084 + 0.5),
+    }
 end
 
 -- Common cartridge header: { type, name, terrain }.
@@ -383,6 +459,46 @@ local function textOf(v)
     return (t == "string" or t == "number") and tostring(v) or ""
 end
 
+-- New public units.json contains no positions. With MAP_CODE, fetch.cmd downloads /api/side_data
+-- instead: its `units` list has the same group records, but enemies are visible only with `foe`.
+-- Returns units in the legacy { groups = ... } shape, an optional chat notice, or nil + reason.
+function M.normalizeUnits(raw, mySide)
+    if type(raw) ~= "table" then return nil, "cannot parse map data" end
+    mySide = sideKey(mySide)
+    if type(raw.units) == "table" or raw.ok ~= nil then
+        if raw.ok ~= true then
+            local why = raw.why
+            if why == "unknown code" then
+                return nil, "website code not recognised; take a new one in DCS (F10 > Settings > Website code)"
+            elseif why == "void" then
+                return nil, "website code expired; take a new one in DCS (F10 > Settings > Website code)"
+            elseif why == "side not set" then
+                return nil, "website code is not bound to a side; take a slot on the server"
+            elseif why == "locked" then
+                return nil, "website code side change is locked"
+            end
+            return nil, "website code request rejected"
+        end
+        if type(raw.units) ~= "table" then return nil, "protected map data has no units list" end
+        local boundSide = sideKey(raw.side)
+        if boundSide and mySide and boundSide ~= mySide then
+            return nil, "website code is for " .. boundSide .. ", current slot is " .. mySide
+        end
+        local ownSide = boundSide or mySide
+        local groups = {}
+        for _, g in ipairs(raw.units) do
+            if type(g) == "table" and ((ownSide and g.side == ownSide) or g.foe == true) then
+                groups[#groups + 1] = g
+            end
+        end
+        return { groups = groups }
+    end
+    if raw.byCode == true then
+        return { groups = {} }, "website code required for ground units (DCS: F10 > Settings > Website code)"
+    end
+    return raw
+end
+
 -- Record with numeric x/z, else nil (counted in s.skipped).
 local function placed(s, p)
     if type(p) == "table" and isNum(p.x) and isNum(p.z) then return p end
@@ -398,17 +514,38 @@ end
 --              -- adLead = the lead unit itself is that AD type
 --     sites  = { {x, z, friendly, ad, name}, ... }  -- SAM sites not covered by a live AD group
 --     farps  = { {x, z, friendly, name, kind}, ... } -- FARPs and FOBs, twin pads merged
---     spawn  = { x, z, name } | nil                 -- own start base (env.spawn), set by M.build
+--     airfields   = { {x, z, friendly, name}, ... } -- airfields (objectives kind "Airfield")
+--     strongholds = { {x, z, friendly, name}, ... } -- strongholds (objectives kind "Stronghold")
+--     strongpoints = { {x, z, friendly, name}, ... } -- alive strongpoints (status.strong kind "OP*")
+--     depots = { {x, z, friendly, name}, ... }       -- alive depots (status.depots3)
+--     spawn  = { x, z, name } | nil                 -- own start/last accepted landing base (env.spawn)
+--     sectors = { {ring = {{x, z}, ...}, owner, name}, ... } -- map sectors (status.geo.sectors)
 --     env    = env                                  -- set by M.build, for lib.elevation/latLon/cartridge
 --     skipped = n                                   -- malformed map records left out
 -- }
 function M.situation(status, units, mySide)
     status, units = listOf(status), listOf(units)
     mySide = sideKey(mySide) or "blue"
-    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {}, skipped = 0 }
+    local s = { side = mySide, front = {}, groups = {}, sites = {}, farps = {},
+        airfields = {}, strongholds = {}, strongpoints = {}, depots = {}, sectors = {}, skipped = 0 }
 
     for _, p in ipairs(listOf(status.front)) do
         if placed(s, p) then s.front[#s.front + 1] = { x = p.x, z = p.z } end
+    end
+
+    for _, sec in ipairs(listOf(type(status.geo) == "table" and status.geo.sectors)) do
+        if type(sec) == "table" and type(sec.ring) == "table" then
+            local ring = {}
+            for _, p in ipairs(sec.ring) do
+                if type(p) == "table" and isNum(p[1]) and isNum(p[2]) then
+                    ring[#ring + 1] = { x = p[1], z = p[2] }
+                end
+            end
+            if #ring >= 3 then
+                s.sectors[#s.sectors + 1] = { ring = ring, owner = sideKey(sec.owner),
+                    name = textOf(sec.name) }
+            end
+        end
     end
 
     for _, g in ipairs(listOf(units.groups)) do
@@ -431,37 +568,60 @@ function M.situation(status, units, mySide)
         end
     end
 
-    -- SAM sites (may be despawned while nobody is near, still a threat)
+    -- SAM sites (may be despawned while nobody is near, still a threat) and strongpoints
     for _, o in ipairs(listOf(status.strong)) do
         o = placed(s, o)
         local side = o and sideKey(o.side)
-        if o and (o.kind == "SAM" or o.kind == "Sam") and side and not o.dead then
-            local friendly = side == mySide
-            local covered = false
-            for _, g in ipairs(s.groups) do
-                if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
+        if o and side and not o.dead then
+            if o.kind == "SAM" or o.kind == "Sam" then
+                local friendly = side == mySide
+                local covered = false
+                for _, g in ipairs(s.groups) do
+                    if g.ad and g.friendly == friendly and dist(g, o) < AD_DEDUP_M then covered = true break end
+                end
+                if not covered then
+                    s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
+                        ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
+                        name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
+                end
+            elseif string.match(textOf(o.kind), "^OP") then
+                s.strongpoints[#s.strongpoints + 1] = { x = o.x, z = o.z,
+                    friendly = side == mySide, name = textOf(o.name) }
             end
-            if not covered then
-                s.sites[#s.sites + 1] = { x = o.x, z = o.z, friendly = friendly,
-                    ad = M.adTypeOf({ textOf(o.name) }) or M.GENERIC_AD,
-                    name = (string.gsub(textOf(o.name), "^SAM%s*", "")) }
-            end
+        end
+    end
+
+    -- Live depot structures only: alive = 0 means destroyed, not an empty but usable depot.
+    for _, o in ipairs(listOf(status.depots3)) do
+        o = placed(s, o)
+        local side = o and sideKey(o.side)
+        if o and side and isNum(o.alive) and o.alive > 0 then
+            s.depots[#s.depots + 1] = { x = o.x, z = o.z,
+                friendly = side == mySide, name = textOf(o.label) }
         end
     end
 
     for _, o in ipairs(listOf(status.objectives)) do
         o = placed(s, o)
         local owner = o and sideKey(o.owner)
-        if o and (o.kind == "FARP" or o.kind == "FOB") and owner then
-            local friendly = owner == mySide
-            local twin = false
-            for _, f in ipairs(s.farps) do
-                if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
-            end
-            if not twin then
-                local name = textOf(o.name)
-                if o.kind == "FARP" then name = "FARP " .. name end
-                s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
+        if o and owner then
+            if o.kind == "FARP" or o.kind == "FOB" then
+                local friendly = owner == mySide
+                local twin = false
+                for _, f in ipairs(s.farps) do
+                    if f.friendly == friendly and dist(f, o) <= FARP_TWIN_M then twin = true break end
+                end
+                if not twin then
+                    local name = textOf(o.name)
+                    if o.kind == "FARP" then name = "FARP " .. name end
+                    s.farps[#s.farps + 1] = { x = o.x, z = o.z, friendly = friendly, name = name, kind = o.kind }
+                end
+            elseif o.kind == "Airfield" then
+                s.airfields[#s.airfields + 1] = { x = o.x, z = o.z,
+                    friendly = owner == mySide, name = textOf(o.name) }
+            elseif o.kind == "Stronghold" then
+                s.strongholds[#s.strongholds + 1] = { x = o.x, z = o.z,
+                    friendly = owner == mySide, name = textOf(o.name) }
             end
         end
     end

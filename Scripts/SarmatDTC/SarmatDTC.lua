@@ -3,8 +3,9 @@
 -- Loaded from Scripts/Hooks/SarmatDTC-hook.lua (DCS GUI environment).
 --
 -- Flow: mission loaded on a SARMAT server -> map data is downloaded in background (fetch.vbs -> fetch.cmd -> curl.exe);
--- player takes a slot -> cartridges are written for the slot's coalition (and rewritten when
--- the fresh download finishes). Files: Saved Games/DCS.openbeta/DTC/SARMAT_<type>.dtc
+-- player takes a slot -> cartridges are written for that coalition (and rewritten when the fresh download finishes).
+-- Optional LANDING_REFRESH also rewrites them after landing at an own-coalition base from the live-map data.
+-- Files: Saved Games/DCS.openbeta/DTC/SARMAT_<type>.dtc
 -- One cartridge per module in Scripts/SarmatDTC/aircraft/*.lua (see aircraft/_template.lua).
 
 local lfs = require('lfs')
@@ -18,13 +19,14 @@ local CONFIG = {
     FETCH_TIMEOUT = 240,           -- above fetch.cmd's worst case (~200 s), or runs could overlap
     STALE_SEC     = 600,           -- cached map data older than this: its age is shown in the chat
     MAX_AGE_SEC   = 3 * 3600,      -- cached map data older than this is not used
+    LANDING_DEBOUNCE_SEC = 15,     -- ignore duplicate landing events for the same unit/base
     SHOW_CHAT     = true,          -- local-only chat notification after writing cartridges
     LOG_SLOT      = true,          -- write own slot details (group, start airbase/FARP, position) to dcs.log
 }
 -- Which aircraft get cartridges and per-aircraft options: Scripts/SarmatDTC/config.lua,
 -- user changes in config.user.lua (see readConfig)
 
-local VERSION   = '1.1.1'          -- in dcs.log: which version a player runs
+local VERSION   = '1.1.13'         -- in dcs.log: which version a player runs
 local LOG_TAG   = 'SARMAT.DTC'
 local BASE_DIR  = lfs.writedir() .. 'Scripts\\SarmatDTC\\'
 local CACHE_DIR = BASE_DIR .. 'cache'
@@ -59,7 +61,7 @@ local function readConfig()
         warn('cannot load config.lua (' .. tostring(cfg) .. '), using all aircraft modules')
         cfg = {}
     end
-    local merged = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = {}, BASE_DTC = {} }
+    local merged = { AIRCRAFT = cfg.AIRCRAFT, OPTIONS = {}, BASE_DTC = {}, MAP_CODE = '', LANDING_REFRESH = false }
     local user = {}
     if fileExists(BASE_DIR .. 'config.user.lua') then
         local okU, u = pcall(core.loadFile, BASE_DIR .. 'config.user.lua')
@@ -77,6 +79,22 @@ local function readConfig()
                 merged.DTC_DIR = src.DTC_DIR
             else
                 warn('DTC_DIR must be a folder path, got ' .. tostring(src.DTC_DIR) .. ', ignored')
+            end
+        end
+        if src.MAP_CODE ~= nil then
+            local code = type(src.MAP_CODE) == 'string' and string.match(src.MAP_CODE, '^%s*(.-)%s*$') or nil
+            -- Keep the command line and URL unambiguous; do not log the code itself.
+            if code and #code <= 128 and string.match(code, '^[A-Za-z0-9%-%._~]*$') then
+                merged.MAP_CODE = code
+            else
+                warn('MAP_CODE must be 0..128 ASCII letters, digits, dot, dash, underscore or tilde; ignored')
+            end
+        end
+        if src.LANDING_REFRESH ~= nil then
+            if type(src.LANDING_REFRESH) == 'boolean' then
+                merged.LANDING_REFRESH = src.LANDING_REFRESH
+            else
+                warn('LANDING_REFRESH must be true or false, got ' .. tostring(src.LANDING_REFRESH) .. ', ignored')
             end
         end
     end
@@ -124,7 +142,8 @@ local function resetState()
         fetchStart = 0,
         fetchedAt  = nil,     -- real time of last successful download
         nextPoll   = 0,
-        spawn      = nil,     -- {x, z, name} of own slot's start base, if known
+        spawn      = nil,     -- {x, z, name} of own start base or last accepted landing base
+        lastLanding = nil,    -- {at, unit, base} of the last accepted landing refresh
         lastKey    = nil,     -- input of the cartridges on disk (inputKey), nil after a failed write
         lastFiles  = {},      -- their paths
         ioChecked  = false,   -- a replaced io.open is logged once per mission
@@ -421,17 +440,19 @@ local function loadCache()
     return { status = statusTxt, units = unitsTxt, age = age }
 end
 
--- Decoded map data of the mission's map: { status, units } or nil, reason.
+-- Decoded map data of the mission's map: { status, units, notice? } or nil, reason.
 local function decodeCache(cache)
     local ok, status = pcall(JSON.decode, JSON, cache.status)
-    local ok2, units = pcall(JSON.decode, JSON, cache.units)
-    if not (ok and ok2 and type(status) == 'table' and type(units) == 'table') then
+    local ok2, rawUnits = pcall(JSON.decode, JSON, cache.units)
+    if not (ok and ok2 and type(status) == 'table' and type(rawUnits) == 'table') then
         return nil, 'cannot parse map data'
     end
     if status.theatre and status.theatre ~= state.theatre then
         return nil, 'map data is for ' .. tostring(status.theatre) .. ', mission map is ' .. tostring(state.theatre)
     end
-    return { status = status, units = units }
+    local units, notice = core.normalizeUnits(rawUnits, state.side)
+    if not units then return nil, notice end
+    return { status = status, units = units, notice = notice }
 end
 
 -- Everything the cartridges are made from (after loadBases): the same key gives the same files.
@@ -574,11 +595,14 @@ local function generate(final, problem)
     end
     for _, w in ipairs(warnings) do warn(w) end
     for _, e in ipairs(errors) do warn('cartridge failed: ' .. e) end
+    if data.notice then warn(data.notice) end
+    local reportProblem = problem
+    if data.notice then reportProblem = reportProblem and (reportProblem .. ', ' .. data.notice) or data.notice end
 
     local summary, written, writeFailed, paths = writeOutputs(files)
     -- a failed write may succeed next time (locked file), so it is not remembered as done
     state.lastKey, state.lastFiles = writeFailed == 0 and key or nil, paths
-    report(summary, written, #errors + writeFailed, problem, cache.age, math.floor((os.clock() - started) * 1000 + 0.5))
+    report(summary, written, #errors + writeFailed, reportProblem, cache.age, math.floor((os.clock() - started) * 1000 + 0.5))
 end
 
 ------------------------------------------------------------------------------
@@ -630,9 +654,15 @@ local function failText(result)
     return file .. ': curl exit ' .. rc .. (known and (', ' .. known) or '')
 end
 
-local function startFetch()
+local function urlEncode(s)
+    return (string.gsub(s, '([^A-Za-z0-9%-%._~])', function(c)
+        return string.format('%%%02X', string.byte(c))
+    end))
+end
+
+local function startFetch(force)
     if state.fetching then return end
-    if state.fetchedAt and now() - state.fetchedAt < CONFIG.REFETCH_SEC then
+    if not force and state.fetchedAt and now() - state.fetchedAt < CONFIG.REFETCH_SEC then
         generate(true)
         return
     end
@@ -646,9 +676,11 @@ local function startFetch()
     removeLeftovers()
     fetchSeq = fetchSeq + 1
     local id = os.time() .. '-' .. fetchSeq
+    local code = urlEncode(settings.MAP_CODE or '')
     -- fetch.vbs starts fetch.cmd (curl.exe) in a hidden window and returns at once; it writes
     -- into CACHE_DIR. DCS's os.execute silently drops commands longer than ~256 chars.
-    local cmd = string.format('wscript.exe //B //Nologo "%sfetch.vbs" "%s" %s', BASE_DIR, CONFIG.SITE .. path, id)
+    local cmd = string.format('wscript.exe //B //Nologo "%sfetch.vbs" "%s" %s "%s"',
+        BASE_DIR, CONFIG.SITE .. path, id, code)
     if #cmd > 250 then warn('download command may be too long for os.execute (' .. #cmd .. ' chars)') end
     local ok, err = pcall(os.execute, cmd)
     if not ok then
@@ -658,7 +690,7 @@ local function startFetch()
     state.fetching = true
     state.fetchId = id
     state.fetchStart = now()
-    info('downloading ' .. CONFIG.SITE .. path)
+    info('downloading ' .. CONFIG.SITE .. path .. (code ~= '' and ' with website code' or ''))
 end
 
 local function pollFetch()
@@ -686,6 +718,26 @@ local function pollFetch()
         warn('download timed out, using previous data if any')
         generate(true, 'download timed out')
     end
+end
+
+-- Resolve the landing base from cached live-map objectives. A synchronous net.dostring_in('mission', ...)
+-- here can stall the GUI thread, so never query DCS from the landing callback.
+local function ownLandingBase(name)
+    local cache = loadCache()
+    if not cache then return nil end
+    local ok, status = pcall(JSON.decode, JSON, cache.status)
+    if not ok or type(status) ~= 'table' then
+        warn('landing base lookup could not parse cached map data')
+        return nil
+    end
+    if status.theatre and status.theatre ~= state.theatre then return nil end
+    local situation = core.situation(status, {}, state.side)
+    for _, bases in ipairs({ situation.airfields, situation.farps }) do
+        for _, base in ipairs(bases) do
+            if base.friendly and base.name == name then return { x = base.x, z = base.z, name = name } end
+        end
+    end
+    return nil
 end
 
 ------------------------------------------------------------------------------
@@ -724,6 +776,26 @@ function callbacks.onPlayerChangeSlot(id)
         generate(false)           -- right away from the older cache, fresh data follows
     end
     startFetch()                  -- fresh data: generates now; otherwise when the download is done
+end
+
+-- "landing", playerID, unit_missionID, airdromeName (empty for a field landing).
+function callbacks.onGameEvent(eventName, playerId, unitMissionId, baseName)
+    if eventName ~= 'landing' or not settings.LANDING_REFRESH or not state.active or not state.side then return end
+    local okId, myId = pcall(net.get_my_player_id)
+    if not okId or playerId ~= myId then return end
+    if type(baseName) ~= 'string' or not string.match(baseName, '%S') then return end
+    local unit = tostring(unitMissionId or '')
+    local previous = state.lastLanding
+    if previous and previous.unit == unit and previous.base == baseName
+            and now() - previous.at < CONFIG.LANDING_DEBOUNCE_SEC then return end
+    local base = ownLandingBase(baseName)
+    if not base then return end
+    state.lastLanding = { at = now(), unit = unit, base = baseName }
+    state.spawn = base
+    info('own landing at ' .. baseName .. '; refreshing cartridges around this base')
+    -- Build once, when the download finishes (also on failure/timeout). No immediate cached rebuild:
+    -- decoding, building and writing here caused avoidable GUI-thread work right at landing.
+    startFetch(true)              -- bypass REFETCH_SEC, but never overlap a running download
 end
 
 function callbacks.onSimulationFrame()

@@ -1,5 +1,6 @@
 @echo off
-rem SarmatDTC: downloads SARMAT map data. Usage: fetch.cmd <out dir> <base url ending with /> <fetch id>
+rem SarmatDTC: downloads SARMAT map data.
+rem Usage: fetch.cmd <out dir> <data base url ending with /> <fetch id> [URL-encoded website code]
 rem Launched hidden by fetch.vbs ("cmd /c"); must keep CRLF line endings (goto/labels break with LF).
 rem The files stay as status-<id>.part / units-<id>.part and the result goes to done-<fetch id>.flag
 rem ("ok" or "fail <file> <curl exit code>"). SarmatDTC.lua puts the pair in place itself: a late run
@@ -11,13 +12,18 @@ setlocal
 set "OUT=%~1"
 set "BASE=%~2"
 set "ID=%~3"
+set "CODE=%~4"
 set "CURL=%SystemRoot%\System32\curl.exe"
 set "OPTS=-s -f -L --retry 2 --retry-max-time 60 --connect-timeout 15 --max-time 40 --max-filesize 5M --proto =https,file --proto-redir =https -A SarmatDTC"
+set "UNITSURL=%BASE%units.json"
+if defined CODE set "APIBASE=%BASE:data/=api/%"
+if defined CODE set "UNITSURL=%APIBASE%side_data?code=%CODE%&sid=sarmat-dtc"
 
 set "FILE=status.json"
 "%CURL%" %OPTS% -o "%OUT%\status-%ID%.part" "%BASE%status.json" || goto fail
 set "FILE=units.json"
-"%CURL%" %OPTS% -o "%OUT%\units-%ID%.part" "%BASE%units.json" || goto fail
+if defined CODE set "FILE=side_data"
+"%CURL%" %OPTS% -o "%OUT%\units-%ID%.part" "%UNITSURL%" || goto fail
 >"%OUT%\done-%ID%.flag" echo ok
 exit 0
 

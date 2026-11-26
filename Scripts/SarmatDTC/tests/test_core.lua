@@ -318,6 +318,56 @@ do
     check(#({ core.build("x", nil, "blue", env, modules, {}) })[2] == 0, "non-table map data must not fail the build")
 end
 
+-- Updated map API: public data needs a website code; protected data exposes only own and `foe` groups
+do
+    local legacy, legacyNotice = core.normalizeUnits(units, "blue")
+    check(legacy == units and legacyNotice == nil, "legacy units.json must stay unchanged")
+
+    local protected = { ok = true, side = "blue", units = {
+        { cat = "ground", side = "blue", x = 1, z = 2, type = "M-2 Bradley", name = "own" },
+        { cat = "ground", side = "red", x = 3, z = 4, type = "T-72B", name = "seen", foe = true },
+        { cat = "ground", side = "red", x = 5, z = 6, type = "T-72B", name = "hidden", foe = false },
+        { cat = "ground", side = "red", x = 7, z = 8, type = "T-72B", name = "also hidden" },
+        { cat = "ground", side = "red", x = 9, z = 10, type = "T-72B", name = "not boolean", foe = 1 },
+    } }
+    local normalized, protectedNotice = core.normalizeUnits(protected, "blue")
+    check(normalized and #normalized.groups == 2 and protectedNotice == nil,
+        "protected units: own + foe filter")
+    if normalized and #normalized.groups == 2 then
+        check(normalized.groups[1].name == "own" and normalized.groups[2].name == "seen",
+            "protected units: wrong groups left")
+    end
+    local sit = core.situation({ front = {} }, normalized, "blue")
+    check(#sit.groups == 2 and sit.groups[1].friendly and not sit.groups[2].friendly and sit.skipped == 0,
+        "protected units: situation side conversion")
+
+    local public, publicNotice = core.normalizeUnits({ byCode = true, groups = {
+        { cat = "ground", side = "red", type = "T-72B" },
+        { cat = "ground", side = "blue", type = "M-2 Bradley" },
+    } }, "blue")
+    check(public and #public.groups == 0 and string.find(publicNotice or "", "website code required", 1, true),
+        "public byCode response: notice required")
+    sit = core.situation({ front = {} }, public, "blue")
+    check(sit.skipped == 0, "public records without coordinates are not malformed")
+
+    local wrong, wrongWhy = core.normalizeUnits(protected, "red")
+    check(wrong == nil and string.find(wrongWhy or "", "current slot is red", 1, true),
+        "protected units: code for the other coalition must be rejected")
+    for _, case in ipairs({
+        { why = "unknown code", text = "not recognised" },
+        { why = "void", text = "expired" },
+        { why = "side not set", text = "not bound" },
+        { why = "locked", text = "locked" },
+        { why = "something else", text = "rejected" },
+    }) do
+        local decoded, why = core.normalizeUnits({ ok = false, why = case.why }, "blue")
+        check(decoded == nil and string.find(why or "", case.text, 1, true), "API error mapping: " .. case.why)
+    end
+    local missing, missingWhy = core.normalizeUnits({ ok = true, side = "blue" }, "blue")
+    check(missing == nil and string.find(missingWhy or "", "no units list", 1, true),
+        "protected response without a units list must be rejected")
+end
+
 -- Lua serializer round trip
 do
     local value = { 1, "two", { x = 1.5, ["bad key"] = true }, name = "q\"uote\n", nested = { list = { 3, 4 } } }
@@ -367,7 +417,7 @@ do
     check(ah.Radios.VHF == 121.5 and ah.Laser.A == 1688, "AH-64: radios/laser not taken from base")
     check(ah.name == core.CARTRIDGE_NAME and ah.type == "AH-64D_BLK_II" and ah.NAV.MissionFile == 1, "AH-64: header")
     check(m1.Points.WPTHZ.isEnabled and m1.Points.WPTHZ.POINTS[1].text == "W01", "AH-64: base waypoints lost")
-    check(m1.Routes[1].Name == "ALPHA" and ah.NAV.Mission_2.Lines[1].note == "M2", "AH-64: base routes/mission 2 lost")
+    check(m1.Routes[1].Name == "ALPHA" and ah.NAV.Mission_2.Lines[1].note == "FRONT", "AH-64: base routes/mission 2")
     check(m1.Points.CTRLM.isEnabled and #m1.Points.CTRLM.POINTS <= 49, "AH-64: CTRLM must replace base points")
     for _, p in ipairs(m1.Points.CTRLM.POINTS) do check(p.text ~= "OLD", "AH-64: stale base CTRLM point") end
     check(m1.Lines[1].note == "FRONT", "AH-64: our lines must replace base lines")
@@ -377,7 +427,8 @@ do
     ah, entry = nativeOf("AH-64D_BLK_II", apacheBase)
     check(#entry.dropped == 1 and entry.dropped[1] == "NAV", "AH-64: NAV of another map must be dropped")
     check(ah.Radios.VHF == 121.5 and ah.terrain == "Syria", "AH-64: radios from another-map base")
-    check(ah.NAV.Mission_2 == nil and ah.NAV.Mission_1.Points.WPTHZ == nil, "AH-64: another-map waypoints leaked")
+    check(ah.NAV.Mission_2.Lines[1].note == "FRONT" and ah.NAV.Mission_1.Points.WPTHZ == nil,
+        "AH-64: another-map waypoints leaked")
 
     -- F-14: plan 1 ours, other plans from base (base without terrain id keeps navigation)
     local f14 = nativeOf("F-14BU", { type = "F-14BU", cartridge_name = "MY", CMDS = { X = 1 },
@@ -385,12 +436,12 @@ do
     check(f14.NAV[1].name == "FRONT" and #f14.NAV[1].waypoints == 0, "F-14: plan 1 must be ours")
     check(f14.NAV[2] and f14.NAV[2].name == "P2" and f14.JDAM and f14.CMDS.X == 1, "F-14: base plans/JDAM/CMDS lost")
 
-    -- F/A-18: base FAOR kept, FLOT and threats ours
+    -- F/A-18: unassigned FAOR/FLOT stay from base, threats are ours
     local f18 = nativeOf("FA-18C_hornet", { type = "FA-18C_hornet", terrain = "Syria", COMM = { C = 1 },
         WYPT = { NAV_PTS = { { wypt_num = 1 } } },
         SA = { FAOR_FLOT = { FAOR = { { id = "FAOR_1" } }, FLOT = { { id = "OLD" } } }, MEZ_THRTS = { { id = "OLD" } } } })
     check(f18.COMM.C == 1 and f18.WYPT.NAV_PTS[1].wypt_num == 1, "F/A-18: base COMM/WYPT lost")
-    check(f18.SA.FAOR_FLOT.FAOR[1].id == "FAOR_1" and f18.SA.FAOR_FLOT.FLOT[1].id == "FLOT_1", "F/A-18: FAOR/FLOT merge")
+    check(f18.SA.FAOR_FLOT.FAOR[1].id == "FAOR_1" and f18.SA.FAOR_FLOT.FLOT[1].id == "OLD", "F/A-18: FAOR/FLOT merge")
     check(f18.SA.MEZ_THRTS[1].id == "MEZ_THRTS_1", "F/A-18: base MEZ threats must be replaced")
 
     -- F-16: base nav points stay, our lines/threats replace
@@ -398,6 +449,38 @@ do
         MPD = { NAV_PTS = { { id = "STPT1" } }, mirror_NAV_PTS = false, GEO_LINES = { { id = "OLD" } } } })
     check(f16.MPD.NAV_PTS[1].id == "STPT1" and f16.MPD.mirror_NAV_PTS == false and f16.COMM.C == 1, "F-16: base nav lost")
     check(f16.MPD.GEO_LINES[1].id == "GEO_LINES31", "F-16: base geo lines must be replaced")
+end
+
+-- F/A-18 FLOT: geographic thirds of the front, with shared cut points
+do
+    local mod = mods["FA-18C_hornet"]
+    local out, errors = core.build(status, units, "blue", env, { mod }, {
+        ["FA-18C_hornet"] = { FLOT_1 = "FRONT_WEST", FLOT_2 = "FRONT_CENTER", FLOT_3 = "FRONT_EAST" },
+    })
+    check(#errors == 0, "F/A-18 front bands: " .. table.concat(errors, "; "))
+    local flot = out[1].content.SA.FAOR_FLOT.FLOT
+    check(#flot == 3, "F/A-18 front bands: expected 3 lines")
+    local front = core.situation(status, units, "blue").front
+    local minZ, maxZ = front[1].z, front[1].z
+    for _, p in ipairs(front) do minZ, maxZ = math.min(minZ, p.z), math.max(maxZ, p.z) end
+    local cuts = { minZ, minZ + (maxZ - minZ) / 3, minZ + (maxZ - minZ) * 2 / 3, maxZ }
+    local notes = { "WEST FRONT", "CENTRAL FRONT", "EAST FRONT" }
+    for i, line in ipairs(flot) do
+        check(line.note == notes[i] and #line.points >= 2 and #line.points <= 7, "F/A-18 front band note/points")
+        for _, p in ipairs(line.points) do
+            check(p.y >= cuts[i] - 1 and p.y <= cuts[i + 1] + 1, "F/A-18 front band outside its range")
+            check(core.distToPolyline(p.x, p.y, front) <= 1.01, "F/A-18 front band left the source front")
+        end
+        if i > 1 then
+            local a, b = flot[i - 1].points[#flot[i - 1].points], line.points[1]
+            check(a.x == b.x and a.y == b.y, "F/A-18 front bands are not joined")
+        end
+    end
+    local only = core.build(status, units, "blue", env, { mod }, {
+        ["FA-18C_hornet"] = { FAOR_1 = "FRONT_WEST", CORRIDOR_1 = "FRONT_EAST" },
+    })
+    check(#only[1].content.SA.FAOR_FLOT.FAOR == 0 and #only[1].content.SA.CORRIDORS == 0,
+        "F/A-18 front bands must be FLOT-only")
 end
 
 -- threat catalogue must match the DCS editors' lists
@@ -647,11 +730,12 @@ for _, side in ipairs({ "blue", "red" }) do
         end
         results[tag .. "#threats"] = { f16 = #mpd.THREAT_PTS, f18 = #sa.MEZ_THRTS, first = mpd.THREAT_PTS[1].threatName }
 
-        local fo = mods["FA-18C_hornet"].options
         local flot = c["FA-18C_hornet"].SA.FAOR_FLOT.FLOT
-        check(#flot >= 1 and #flot <= fo.LINES, tag .. ": F/A-18 lines")
-        for _, ln in ipairs(flot) do check(#ln.points >= 2 and #ln.points <= fo.LINE_PTS, tag .. ": F/A-18 points") end
-        check(chained(flot, "points"), tag .. ": F/A-18 lines not chained")
+        check(#flot <= 3, tag .. ": F/A-18 FLOT lines")
+        for _, ln in ipairs(flot) do check(#ln.points >= 2 and #ln.points <= 7, tag .. ": F/A-18 FLOT points") end
+        local corridors = c["FA-18C_hornet"].SA.CORRIDORS
+        check(#corridors == 1 and #corridors[1].points >= 2 and #corridors[1].points <= 14,
+            tag .. ": F/A-18 default front corridor")
 
         local plan = c["F-14BU"].NAV[1]
         local total = 0

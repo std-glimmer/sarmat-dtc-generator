@@ -111,13 +111,18 @@ net = {
         if key == 'side' then return mySideNum end
         if key == 'slot' then return mySlot end
     end,
+    dostring_in = function()
+        error('landing must not make a synchronous mission query')
+    end,
     recv_chat = function(msg) chats[#chats + 1] = msg end,
 }
 -- download: 'ok' (fixtures), 'fail' (missing file:// folder), 'none' (no process: never finishes)
 local download = 'ok'
+local fetchCount = 0
 local realExecute = os.execute
 os.execute = function(cmd)
     if string.find(cmd, 'fetch.vbs', 1, true) then
+        fetchCount = fetchCount + 1
         if download == 'none' then return 0 end
         local base = download == 'fail' and (fileBase .. 'missing/') or fileBase
         cmd = cmd:gsub('https://baikalprimestudio%.com/data/', (base:gsub('%%', '%%%%')))
@@ -469,6 +474,112 @@ print('-- no temporary files left next to the cartridges')
 for _, f in ipairs(listDir(dtcDir)) do
     check(not string.match(f, '%.tmp$') and not string.match(f, '%.bak$'), 'left over: ' .. f)
 end
+
+print('-- website code: protected side_data is downloaded and decoded')
+download = 'ok'
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { MAP_CODE = "  AB2C3D  " }
+]])
+from = #logs
+cb.onMissionLoadEnd()
+check(frames(30), 'protected download did not finish')
+mySideNum, mySlot = 2, '101'
+cb.onPlayerChangeSlot(7)
+check(logged('^downloading .* with website code$', from), 'protected download not started')
+check(not logged('AB2C3D', from), 'website code leaked into the log')
+local protectedFile = io.open(cacheDir .. 'units.json', 'rb')
+local protectedRaw = protectedFile and JSON:decode(protectedFile:read('*a'))
+if protectedFile then protectedFile:close() end
+check(protectedRaw and protectedRaw.ok == true and protectedRaw.side == 'blue' and #protectedRaw.units == 3,
+    'side_data fixture was not downloaded')
+check(not string.find(chats[#chats] or '', 'website code required', 1, true),
+    'protected data incorrectly reported as public')
+
+print('-- invalid MAP_CODE is rejected without exposing its value')
+cb.onSimulationStop()
+download = 'none'
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { MAP_CODE = "bad code&secret" }
+]])
+from = #logs
+cb.onMissionLoadEnd()
+check(logged('^MAP_CODE must be .*; ignored$', from), 'invalid MAP_CODE not reported')
+check(not logged('secret', from), 'invalid website code leaked into the log')
+cb.onSimulationStop()
+
+print('-- public byCode data keeps status objects and explains missing ground units')
+writeFile(cacheDir .. 'units.json', [[
+{"byCode":true,"count":2,"groups":[{"cat":"ground","side":"red","type":"T-72B"},{"cat":"ground","side":"blue","type":"M-2 Bradley"}]}
+]])
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { MAP_CODE = "" }
+]])
+cb.onMissionLoadEnd()
+mySideNum, mySlot = 2, '101'
+from = #logs
+cb.onPlayerChangeSlot(7)
+check(string.find(chats[#chats] or '', 'website code required for ground units', 1, true) ~= nil,
+    'public byCode notice missing from chat: ' .. tostring(chats[#chats]))
+check(not logged('malformed record', from), 'public records without coordinates counted as malformed')
+check(exists(dtcDir .. 'SARMAT_AH-64D_BLK_II.dtc'), 'public status data did not produce a cartridge')
+cb.onSimulationStop()
+
+print('-- landing is ignored by default (legacy respawn/slot-only mode)')
+download = 'ok'
+mySideNum, mySlot = 2, '101'
+cb.onMissionLoadEnd()
+check(frames(30), 'landing test setup download did not finish')
+cb.onPlayerChangeSlot(7)
+clock = clock + 5
+from = #logs
+local fetches, chatCount = fetchCount, #chats
+cb.onGameEvent('landing', 7, 101, 'FARP 10-1')
+check(fetchCount == fetches and #chats == chatCount and not logged('own landing', from),
+    'landing ran although LANDING_REFRESH was false')
+cb.onSimulationStop()
+
+print('-- opt-in landing recenters from map data and builds only after the download')
+writeFile(writedir .. 'Scripts\\SarmatDTC\\config.user.lua', [[
+return { LANDING_REFRESH = true }
+]])
+cb.onMissionLoadEnd()
+check(frames(30), 'opt-in landing setup download did not finish')
+cb.onPlayerChangeSlot(7)
+clock = clock + 5
+from = #logs
+fetches, chatCount = fetchCount, #chats
+cb.onGameEvent('landing', 3, 101, 'FARP 10-1')       -- another player
+cb.onGameEvent('landing', 7, 101, '')                -- field landing
+cb.onGameEvent('landing', 7, 101, 'Hama')            -- opposite coalition
+check(fetchCount == fetches and #chats == chatCount, 'ignored landing triggered a refresh')
+local acceptedAt = clock
+cb.onGameEvent('landing', 7, 101, 'FARP 10-1')
+check(fetchCount == fetches + 1, 'own landing did not bypass REFETCH_SEC')
+check(logged('^own landing at FARP 10%-1; refreshing cartridges around this base$', from),
+    'accepted landing not logged')
+check(#chats == chatCount, 'landing caused an immediate cached rebuild')
+check(frames(30), 'landing refresh download did not finish')
+check(string.find(chats[#chats] or '', '(FARP 10-1)', 1, true) ~= nil,
+    'landing base did not become the new priority center: ' .. tostring(chats[#chats]))
+
+clock = acceptedAt + 1
+fetches = fetchCount
+cb.onGameEvent('landing', 7, 101, 'FARP 10-1')
+check(fetchCount == fetches, 'duplicate landing inside the debounce interval started a download')
+
+clock = acceptedAt + 16
+cb.onGameEvent('landing', 7, 101, 'FARP 10-1')
+check(fetchCount == fetches + 1, 'landing after the debounce interval did not refresh')
+fetches, chatCount = fetchCount, #chats
+cb.onGameEvent('landing', 7, 101, 'Hatay')
+check(fetchCount == fetches, 'landing started a parallel download')
+check(logged('^own landing at Hatay; refreshing cartridges around this base$', from),
+    'landing during an active download was not logged')
+check(#chats == chatCount, 'active landing download caused an immediate cached rebuild')
+check(frames(30), 'active landing download did not finish')
+check(string.find(chats[#chats] or '', '(Hatay)', 1, true) ~= nil,
+    'second landing base did not become the new priority center')
+cb.onSimulationStop()
 
 if failures > 0 then
     print(failures .. ' check(s) failed')

@@ -36,4 +36,36 @@ return {
         data.NAV = { { name = "FRONT", waypoints = {}, lines = lines, additional_points = {}, route_as_line = false } }
         return data, { lines = #lines }
     end,
+
+    outputs = {
+        {
+            id      = "dcs-dtc-waypoints",
+            format  = "json",
+            dir     = "%USERPROFILE%\\Documents\\DCS-DTC\\Presets\\F14BU",
+            file    = "SARMAT.json",
+            enabled = false,
+            build   = function(s, lib)
+                -- The app uploads flight-plan waypoints 51..99; use own landing places only.
+                local objects = {}
+                for _, source in ipairs({ s.airfields, s.farps }) do
+                    for _, p in ipairs(source) do
+                        if p.friendly then objects[#objects + 1] = p end
+                    end
+                end
+                local ordered = lib.byFront(objects, s.front)
+                local points = {}
+                for i = 1, math.min(#ordered, 49) do
+                    local p = ordered[i]
+                    points[i] = lib.dcsDtcWaypoint(s.env, 50 + i, p.name, p.x, p.z)
+                end
+                if #points == 0 then return nil, { waypoints = 0 } end
+                return {
+                    Aircraft = "F14BU",
+                    Upload = { Waypoints = true },
+                    Waypoints = { Waypoints = points },
+                    Version = 2,
+                }, { waypoints = #points }
+            end,
+        },
+    },
 }
